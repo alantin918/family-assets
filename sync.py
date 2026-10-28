@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-從 Google 試算表（透過 Apps Script Web App）自動抓取「財務」分頁的最新每月資產快照，
-更新本機的 balances.csv 與 summary.csv，並產生加密後的 data.enc.json 供 GitHub Pages 網站讀取。
+從 Google 試算表（透過 Apps Script Web App）自動抓取「財務」分頁的最新每月資產快照與共同基金帳本，
+更新本機的 balances.csv、summary.csv、ledger.csv，並產生加密後的 data.enc.json 供 GitHub Pages 網站讀取。
 """
 
 import base64
@@ -20,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
 BALANCES_CSV = BASE_DIR / "balances.csv"
 SUMMARY_CSV = BASE_DIR / "summary.csv"
+LEDGER_CSV = BASE_DIR / "ledger.csv"
 ENCRYPTED_JSON = BASE_DIR / "data.enc.json"
 
 # 帳戶固定順序與分類（與原 balances.csv 完全一致）
@@ -91,13 +92,14 @@ def encrypt_payload(plaintext_bytes: bytes, passcode: str) -> dict:
     }
 
 
-def write_encrypted_json(summary_rows: list, balance_rows: list, env: dict):
-    payload_Obj = {
+def write_encrypted_json(summary_rows: list, balance_rows: list, ledger_rows: list, env: dict):
+    payload_obj = {
         "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "summary": summary_rows,
         "balances": balance_rows,
+        "ledger": ledger_rows,
     }
-    plaintext_bytes = json.dumps(payload_Obj, ensure_ascii=False).encode("utf-8")
+    plaintext_bytes = json.dumps(payload_obj, ensure_ascii=False).encode("utf-8")
 
     passcodes = []
     for k in [env.get("WEB_PASSCODE", ""), env.get("APPS_SCRIPT_KEY", ""), "alan2026"]:
@@ -123,10 +125,10 @@ def fetch_sheet_data(url: str, key: str) -> dict:
 def git_push_update(latest_date: str):
     if not (BASE_DIR / ".git").exists():
         return
-    subprocess.run(["git", "add", "data.enc.json", "index.html", "README.md", "sync.py"], cwd=BASE_DIR, check=False)
+    subprocess.run(["git", "add", "data.enc.json", "index.html", "README.md", "sync.py", "bot.py", ".gitignore"], cwd=BASE_DIR, check=False)
     status = subprocess.check_output(["git", "status", "--porcelain"], cwd=BASE_DIR).decode("utf-8").strip()
     if status:
-        subprocess.run(["git", "commit", "-m", f"更新家庭資產快照 ({latest_date})"], cwd=BASE_DIR, check=True)
+        subprocess.run(["git", "commit", "-m", f"更新家庭資產快照與參數 ({latest_date})"], cwd=BASE_DIR, check=True)
         subprocess.run(["git", "push"], cwd=BASE_DIR, check=True)
         print("🚀 已自動推送加密資料並更新 GitHub Pages 網站！")
     else:
@@ -147,7 +149,11 @@ def main():
                 {"date": r["date"], "account": r["account"], "category": r["category"], "amount": int(r["amount"])}
                 for r in csv.DictReader(f)
             ]
-        write_encrypted_json(summary_rows, balance_rows, env)
+        ledger_rows = []
+        if LEDGER_CSV.exists():
+            with open(LEDGER_CSV, encoding="utf-8") as f:
+                ledger_rows = list(csv.DictReader(f))
+        write_encrypted_json(summary_rows, balance_rows, ledger_rows, env)
         print("🔒 已由本機 CSV 重新產生加密檔 data.enc.json")
         return
 
@@ -164,6 +170,29 @@ def main():
 
     rows = data["財務"]["display"]
 
+    # 1. 解析左半部「夢想撲滿」共同基金收支歷史帳本 (Cols 0..6)
+    ledger_rows = []
+    for idx, r in enumerate(rows[1:], start=1):
+        if len(r) < 5:
+            continue
+        item = r[0].strip()
+        if item == "房租列表":
+            break
+        tot_str = r[4].strip()
+        if not item and not tot_str:
+            continue
+        if tot_str.startswith("NT$") or tot_str.startswith("-NT$"):
+            note = (r[5].strip() if len(r) > 5 else "") or (r[6].strip() if len(r) > 6 else "")
+            ledger_rows.append({
+                "item": item,
+                "alan": parse_nt(r[1]) if len(r) > 1 else 0,
+                "anne": parse_nt(r[2]) if len(r) > 2 else 0,
+                "expense": parse_nt(r[3]) if len(r) > 3 else 0,
+                "balance": parse_nt(tot_str),
+                "note": note,
+            })
+
+    # 2. 解析右下半部「每月帳戶餘額快照」
     after_joint_row_idx = None
     for idx, r in enumerate(rows):
         if len(r) > 7 and r[7].strip() == "扣除共同基金後":
@@ -227,11 +256,16 @@ def main():
         writer.writeheader()
         writer.writerows(balance_rows)
 
-    write_encrypted_json(summary_rows, balance_rows, env)
+    with open(LEDGER_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["item", "alan", "anne", "expense", "balance", "note"])
+        writer.writeheader()
+        writer.writerows(ledger_rows)
+
+    write_encrypted_json(summary_rows, balance_rows, ledger_rows, env)
 
     latest = summary_rows[-1]
     joint = latest["total"] - latest["after_joint"]
-    print(f"✅ 同步完成！共抓取 {len(summary_rows)} 期快照（{summary_rows[0]['date']} ～ {latest['date']}）")
+    print(f"✅ 同步完成！共抓取 {len(summary_rows)} 期快照（{summary_rows[0]['date']} ～ {latest['date']}）與 {len(ledger_rows)} 筆共同基金帳本紀錄")
     print(f"📊 最新一期 ({latest['date']})：")
     print(f"   • 總資產：NT${latest['total']:,}")
     print(f"   • 共同基金：NT${joint:,}")

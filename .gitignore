@@ -5,5 +5,6 @@ __pycache__/
 *.log
 summary.csv
 balances.csv
+ledger.csv
 .bot.pid
 .authorized_users.json

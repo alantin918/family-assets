@@ -9,7 +9,7 @@
     :root {
       --font-anthropic-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
       --font-anthropic-serif: Georgia, "Noto Serif TC", "Songti TC", serif;
-      --cds-font-size-title: 1.65rem;
+      --cds-font-size-title: 1.6rem;
       --cds-font-size-heading: 1.05rem;
       --cds-font-size-body: 0.95rem;
       --cds-font-size-caption: 0.8rem;
@@ -155,7 +155,7 @@
     .fx-lock-action:hover { color: var(--color-fg); }
     .fx-take { color: var(--color-fg-muted); font-size: var(--cds-font-size-body); line-height: 1.7; margin: var(--cds-gap-sm) 0 0; max-width: 62em; }
     .fx .fx-take b { color: var(--color-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
-    .fx-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--cds-gap-md); }
+    .fx-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: var(--cds-gap-md); }
     .fx-tile { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-md) var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-xs); min-width: 0; }
     .fx-lab { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
     .fx-big { font-family: var(--font-anthropic-serif); font-weight: 600; font-size: var(--cds-font-size-title); font-variant-numeric: tabular-nums; }
@@ -210,7 +210,7 @@
         <p class="fx-take">截至 <b data-draw="k-date">—</b>，總資產 <b data-draw="k-total">—</b>，其中共同基金 <b data-draw="k-joint">—</b>（占 <b data-draw="k-jshare">—</b>），Alan 可用 <b data-draw="k-personal">—</b>。<span class="fx-s-stock">銀行與電子支付的現金只有 <b data-draw="k-cash">—</b>，比共同基金少，代表共同基金約有 <b data-draw="k-instock">—</b> 實際放在股票裡，股價波動會直接影響共同基金。</span><span class="fx-s-cash" hidden>銀行與電子支付的現金足以涵蓋整筆共同基金。</span></p>
       </header>
 
-      <section class="fx-tiles" aria-label="最新數字">
+      <section class="fx-tiles" aria-label="最新數字與進階指標">
         <div class="fx-tile">
           <span class="fx-lab">總資產</span>
           <span class="fx-big" data-draw="t-total">—</span>
@@ -234,7 +234,22 @@
         <div class="fx-tile">
           <span class="fx-lab">共同基金放在股票的部分</span>
           <span class="fx-big" data-draw="t-instock">—</span>
-          <span class="fx-sub">現金部位 <span data-draw="t-cash">—</span></span>
+          <span class="fx-sub">現金覆蓋率 <span data-draw="t-cashcov">—</span>（現金 <span data-draw="t-cash">—</span>）</span>
+        </div>
+        <div class="fx-tile">
+          <span class="fx-lab">🛡️ 股票可承受回檔緩衝</span>
+          <span class="fx-big" data-draw="t-safety">—</span>
+          <span class="fx-sub">不傷及共同基金本金的最大跌幅</span>
+        </div>
+        <div class="fx-tile">
+          <span class="fx-lab">🎯 下一里程碑（<span data-draw="t-mtarget">—</span>）</span>
+          <span class="fx-big" data-draw="t-mdiff">—</span>
+          <span class="fx-sub">按月存 2 萬預計約 <span data-draw="t-mmonths">—</span> 個月達標</span>
+        </div>
+        <div class="fx-tile">
+          <span class="fx-lab">🚀 今年累計總成長（自 3/6 起）</span>
+          <span class="fx-big fx-up" data-draw="t-ytd">—</span>
+          <span class="fx-sub">月均淨增 <span data-draw="t-mavg">—</span>｜前三大集中度 <span data-draw="t-top3">—</span></span>
         </div>
       </section>
 
@@ -274,13 +289,26 @@
       </section>
 
       <section class="fx-sec" id="accounts">
-        <h2>各帳戶最新餘額</h2>
+        <h2>各帳戶最新餘額與歷史極值</h2>
         <div class="fx-card">
-          <p class="fx-note">最新一次快照，和前一次比較。餘額為 0 且沒有變動的帳戶不列出。</p>
+          <p class="fx-note">最新一次快照，包含較上期增減、自 3 月以來累計增減與歷次最高水位。餘額為 0 且無變動的帳戶不列出。</p>
           <div class="fx-scroll">
             <table class="fx-tbl">
-              <thead><tr><th>帳戶</th><th>類別</th><th>餘額</th><th>較上期</th><th>占比</th></tr></thead>
+              <thead><tr><th>帳戶</th><th>類別</th><th>最新餘額</th><th>較上期</th><th>累計變化(3月起)</th><th>歷史最高</th><th>占比</th></tr></thead>
               <tbody data-draw="acctrows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="fx-sec" id="ledger-sec">
+        <h2>夢想撲滿：共同基金收支帳本（近期紀錄）</h2>
+        <div class="fx-card">
+          <p class="fx-note">同步自 Google 試算表「財務」分頁左半部，紀錄每月雙方固定投入與共同支出明細。</p>
+          <div class="fx-scroll">
+            <table class="fx-tbl">
+              <thead><tr><th>項目</th><th>備註</th><th>Alan 投入/代墊</th><th>Anne 投入/代墊</th><th>共同花費</th><th>撲滿累積總額</th></tr></thead>
+              <tbody data-draw="ledgerrows"></tbody>
             </table>
           </div>
         </div>
@@ -291,7 +319,6 @@
   </div>
 
   <script>
-    // 輕量級 dash 執行引擎（完整相容原版 Claude Dashboard 邏輯）
     const dash = (() => {
       const store = {};
       const calcs = [];
@@ -311,8 +338,9 @@
         onData(fn) { listeners.push(fn); },
         data(name) { return { status: store[name] ? 'ok' : 'empty', data: store[name] || [] }; },
         loadRaw(raw) {
-          store.summary = raw.summary;
-          store.balances = raw.balances;
+          store.summary = raw.summary || [];
+          store.balances = raw.balances || [];
+          store.ledger = raw.ledger || [];
           for (const c of calcs) {
             const args = c.inputs.map(k => store[k] || []);
             store[c.name] = c.fn(...args);
@@ -325,7 +353,6 @@
       };
     })();
 
-    // 解密工具（Web Crypto SHA-256 CTR）
     async function sha256Bytes(str) {
       const buf = new TextEncoder().encode(str);
       const hash = await crypto.subtle.digest('SHA-256', buf);
@@ -363,9 +390,8 @@
     }
   </script>
 
-  <!-- 原版繪圖與計算邏輯 -->
   <script>
-    window.fxNT = (v) => 'NT$' + d3.format(',')(Math.round(v));
+    window.fxNT = (v) => (v < 0 ? '−NT$' : 'NT$') + d3.format(',')(Math.abs(Math.round(v)));
     window.fxSigned = (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + 'NT$' + d3.format(',')(Math.abs(Math.round(v)));
     window.fxWan = (v) => {
       const a = Math.abs(v);
@@ -479,16 +505,29 @@
     });
 
     dash.calc('latest', {
-      inputs: ['split', 'bycat'],
-      fn: (split, bycat) => {
-        const a = split[split.length - 1], p = split[split.length - 2];
+      inputs: ['split', 'bycat', 'balances'],
+      fn: (split, bycat, balances) => {
+        const a = split[split.length - 1], p = split[split.length - 2], f = split[0];
         const c = bycat.find((r) => r.date === a.date);
         const cash = c.bank + c.epay;
+        const safety = c.stock > 0 ? -(a.personal / c.stock) : -1;
+        const targets = [500000, 600000, 800000, 1000000];
+        const nextT = targets.find(t => t > a.joint) || 1000000;
+        const mDiff = Math.max(0, nextT - a.joint);
+        const mMonths = Math.ceil(mDiff / 20000);
+        const ytd = a.total - f.total;
+        const ytdPct = f.total ? ytd / f.total : 0;
+
+        const curBals = balances.filter(b => b.date === a.date).map(b => Number(b.amount)).sort((x, y) => y - x);
+        const top3Share = a.total ? (curBals.slice(0, 3).reduce((s, v) => s + v, 0) / a.total) : 0;
+
         return [{
           date: a.date, prev: p.date, total: a.total, joint: a.joint, personal: a.personal,
           d_total: a.total - p.total, d_joint: a.joint - p.joint, d_personal: a.personal - p.personal,
           stock: c.stock, stock_share: c.stock / a.total, joint_share: a.joint / a.total,
-          cash: cash, joint_in_stock: Math.max(0, a.joint - cash),
+          cash: cash, cash_cov: Math.min(1, cash / a.joint), joint_in_stock: Math.max(0, a.joint - cash),
+          safety: safety, m_target: (nextT / 10000) + '萬', m_diff: '差 ' + fxNT(mDiff), m_months: mMonths,
+          ytd: `${fxSigned(ytd)} (${d3.format('+.1%')(ytdPct)})`, m_avg: fxSigned(Math.round(ytd / 7)), top3: d3.format('.1%')(top3Share)
         }];
       },
     });
@@ -497,16 +536,23 @@
       inputs: ['balances'],
       fn: (balances) => {
         const dates = [...new Set(balances.map((r) => r.date))].sort();
-        const L = dates[dates.length - 1], P = dates[dates.length - 2];
+        const L = dates[dates.length - 1], P = dates[dates.length - 2], F = dates[0];
         const m = {};
         for (const r of balances) {
-          const o = m[r.account] = m[r.account] || { account: r.account, category: r.category, balance: 0, prev: 0 };
-          if (r.date === L) o.balance = Number(r.amount);
-          if (r.date === P) o.prev = Number(r.amount);
+          const amt = Number(r.amount);
+          const o = m[r.account] = m[r.account] || { account: r.account, category: r.category, balance: 0, prev: 0, first: 0, max: 0 };
+          if (r.date === L) o.balance = amt;
+          if (r.date === P) o.prev = amt;
+          if (r.date === F) o.first = amt;
+          if (amt > o.max) o.max = amt;
         }
         const tot = Object.values(m).reduce((s, o) => s + o.balance, 0);
         return Object.values(m)
-          .map((o) => ({ account: o.account, category: o.category, balance: o.balance, change: o.balance - o.prev, share: tot ? o.balance / tot : 0 }))
+          .map((o) => ({
+            account: o.account, category: o.category, balance: o.balance,
+            change: o.balance - o.prev, ytd_change: o.balance - o.first, max: o.max,
+            share: tot ? o.balance / tot : 0
+          }))
           .sort((a, b) => b.balance - a.balance);
       },
     });
@@ -521,11 +567,15 @@
     });
 
     const pct = d3.format('.1%');
+    const idFmt = (v) => v;
     const fields = {
       'k-date': ['date', fxMD], 'k-total': ['total', fxNT], 'k-joint': ['joint', fxNT], 'k-jshare': ['joint_share', pct],
       'k-personal': ['personal', fxNT], 'k-cash': ['cash', fxNT], 'k-instock': ['joint_in_stock', fxNT],
       't-total': ['total', fxNT], 't-joint': ['joint', fxNT], 't-personal': ['personal', fxNT],
-      't-sshare': ['stock_share', pct], 't-stock': ['stock', fxNT], 't-instock': ['joint_in_stock', fxNT], 't-cash': ['cash', fxNT],
+      't-sshare': ['stock_share', pct], 't-stock': ['stock', fxNT], 't-instock': ['joint_in_stock', fxNT],
+      't-cash': ['cash', fxNT], 't-cashcov': ['cash_cov', pct], 't-safety': ['safety', pct],
+      't-mtarget': ['m_target', idFmt], 't-mdiff': ['m_diff', idFmt], 't-mmonths': ['m_months', idFmt],
+      't-ytd': ['ytd', idFmt], 't-mavg': ['m_avg', idFmt], 't-top3': ['top3', idFmt],
     };
     for (const [name, [f, fmt]] of Object.entries(fields)) {
       dash.draw(name, (el) => {
@@ -642,7 +692,7 @@
       if (d.status !== 'ok') return;
       const pct = d3.format('.1%');
       for (const r of d.data) {
-        if (!r.balance && !r.change) continue;
+        if (!r.balance && !r.change && !r.max) continue;
         const tr = tb.insertRow();
         tr.insertCell().textContent = r.account;
         tr.insertCell().textContent = r.category;
@@ -651,11 +701,49 @@
         c.textContent = r.change === 0 ? '—' : fxSigned(r.change);
         if (r.change > 0) c.className = 'fx-up';
         if (r.change < 0) c.className = 'fx-down';
+
+        const y = tr.insertCell();
+        y.textContent = r.ytd_change === 0 ? '—' : fxSigned(r.ytd_change);
+        if (r.ytd_change > 0) y.className = 'fx-up';
+        if (r.ytd_change < 0) y.className = 'fx-down';
+
+        tr.insertCell().textContent = fxNT(r.max);
         tr.insertCell().textContent = pct(r.share);
       }
     });
 
-    // 載入加密檔案與解鎖流程
+    dash.draw('ledgerrows', (tb) => {
+      tb.replaceChildren();
+      const d = dash.data('ledger');
+      if (d.status !== 'ok' || !d.data.length) return;
+      const recent = d.data.slice(-25).reverse();
+      for (const r of recent) {
+        const tr = tb.insertRow();
+        tr.insertCell().textContent = r.item;
+        tr.insertCell().textContent = r.note || '—';
+
+        const cAlan = tr.insertCell();
+        const vAlan = Number(r.alan || 0);
+        cAlan.textContent = vAlan === 0 ? '—' : fxSigned(vAlan);
+        if (vAlan > 0) cAlan.className = 'fx-up';
+        if (vAlan < 0) cAlan.className = 'fx-down';
+
+        const cAnne = tr.insertCell();
+        const vAnne = Number(r.anne || 0);
+        cAnne.textContent = vAnne === 0 ? '—' : fxSigned(vAnne);
+        if (vAnne > 0) cAnne.className = 'fx-up';
+        if (vAnne < 0) cAnne.className = 'fx-down';
+
+        const cExp = tr.insertCell();
+        const vExp = Number(r.expense || 0);
+        cExp.textContent = vExp === 0 ? '—' : fxSigned(vExp);
+        if (vExp > 0) cExp.className = 'fx-up';
+        if (vExp < 0) cExp.className = 'fx-down';
+
+        tr.insertCell().textContent = fxNT(Number(r.balance || 0));
+      }
+    });
+
     const STORAGE_KEY = 'fa_dash_pass_v1';
     let cachedEncData = null;
     let unlockedRaw = null;
@@ -708,7 +796,6 @@
       }
     });
 
-    // 若瀏覽器曾記住密碼，自動解鎖
     (async () => {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
