@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-家庭資產 Telegram Bot
+家庭資產 Telegram Bot (@ALANANNE_FAMILY_bot)
 支援功能：
   • 📊 資產總覽 (/start, /summary)
   • 🏦 帳戶明細 (/accounts)
@@ -10,14 +10,26 @@
 """
 
 import csv
+import html
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+# 優先使用 IPv4，避免 macOS IPv6 超時造成回應延遲
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+
+socket.getaddrinfo = _ipv4_getaddrinfo
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
@@ -94,6 +106,7 @@ def main_keyboard() -> dict:
         "keyboard": [
             [{"text": "📊 資產總覽"}, {"text": "🏦 帳戶明細"}],
             [{"text": "📈 歷月趨勢"}, {"text": "🔄 同步試算表"}],
+            [{"text": "🌐 線上儀表板"}],
         ],
         "resize_keyboard": True,
     }
@@ -153,22 +166,22 @@ def build_summary_text() -> str:
     joint_in_stock = max(0, cur_joint - cash_sum)
 
     lines = [
-        f"📊 *家庭資產最新總覽*（截至 `{cur['date']}`）",
+        f"📊 <b>家庭資產最新總覽</b>（截至 <code>{cur['date']}</code>）",
         "",
-        f"💰 *總資產*：`{fmt_nt(cur['total'])}`（較上期 {fmt_signed(d_total)}）",
-        f"💑 *夫妻共同基金*：`{fmt_nt(cur_joint)}`（占 {cur_joint / cur['total'] * 100:.1f}%｜{fmt_signed(d_joint)}）",
-        f"🧑 *Alan 可用*：`{fmt_nt(cur['after_joint'])}`（較上期 {fmt_signed(d_personal)}）",
+        f"💰 <b>總資產</b>：<code>{fmt_nt(cur['total'])}</code>（較上期 {fmt_signed(d_total)}）",
+        f"💑 <b>夫妻共同基金</b>：<code>{fmt_nt(cur_joint)}</code>（占 {cur_joint / cur['total'] * 100:.1f}%｜{fmt_signed(d_joint)}）",
+        f"🧑 <b>Alan 可用</b>：<code>{fmt_nt(cur['after_joint'])}</code>（較上期 {fmt_signed(d_personal)}）",
         "",
         "─── 資金存放結構 ───",
-        f"📈 *證券股票（含在途）*：`{fmt_nt(stock_sum)}`（{stock_sum / cur['total'] * 100:.1f}%）",
-        f"🏦 *銀行存款＋電支現金*：`{fmt_nt(cash_sum)}`（{cash_sum / cur['total'] * 100:.1f}%）",
+        f"📈 <b>證券股票（含在途）</b>：<code>{fmt_nt(stock_sum)}</code>（{stock_sum / cur['total'] * 100:.1f}%）",
+        f"🏦 <b>銀行存款＋電支現金</b>：<code>{fmt_nt(cash_sum)}</code>（{cash_sum / cur['total'] * 100:.1f}%）",
     ]
     if joint_in_stock > 0:
-        lines.append(f"⚠️ 共同基金約有 `{fmt_nt(joint_in_stock)}` 放在股票部位中")
+        lines.append(f"⚠️ 共同基金約有 <code>{fmt_nt(joint_in_stock)}</code> 放在股票部位中")
     else:
         lines.append("✅ 現金部位足以完全涵蓋整筆共同基金")
 
-    lines.append(f"\n🔗 [點此開啟線上圖表儀表板]({WEB_URL})")
+    lines.append(f'\n🔗 <a href="{WEB_URL}">點此開啟線上圖表儀表板</a>')
     return "\n".join(lines)
 
 
@@ -190,23 +203,23 @@ def build_accounts_text() -> str:
         items.append((amt, acct, b["category"], delta))
     items.sort(reverse=True)
 
-    lines = [f"🏦 *各帳戶最新餘額*（`{cur_date}` vs `{prev_date}`）\n"]
+    lines = [f"🏦 <b>各帳戶最新餘額</b>（<code>{cur_date}</code> vs <code>{prev_date}</code>）\n"]
     for amt, acct, cat, delta in items:
         pct = amt / total * 100
         d_str = "—" if delta == 0 else fmt_signed(delta)
         icon = "📈" if cat == "證券" else ("📱" if cat == "電子支付" else "🏦")
-        lines.append(f"{icon} *{acct}*：`{fmt_nt(amt)}`（{pct:.1f}%｜{d_str}）")
+        lines.append(f"{icon} <b>{html.escape(acct)}</b>：<code>{fmt_nt(amt)}</code>（{pct:.1f}%｜{d_str}）")
 
     return "\n".join(lines)
 
 
 def build_history_text() -> str:
     summary, _ = read_data()
-    lines = ["📈 *歷月資產與共同基金趨勢*\n"]
+    lines = ["📈 <b>歷月資產與共同基金趨勢</b>\n"]
     for r in summary:
         joint = r["total"] - r["after_joint"]
         lines.append(
-            f"• `{r['date']}`｜總 `{fmt_nt(r['total'])}`｜共同 `{fmt_nt(joint)}`｜可用 `{fmt_nt(r['after_joint'])}`"
+            f"• <code>{r['date']}</code>｜總 <code>{fmt_nt(r['total'])}</code>｜共同 <code>{fmt_nt(joint)}</code>｜可用 <code>{fmt_nt(r['after_joint'])}</code>"
         )
     return "\n".join(lines)
 
@@ -215,7 +228,7 @@ def send_msg(token: str, chat_id: int, text: str, reply_markup: dict = None):
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
     if reply_markup:
@@ -254,7 +267,7 @@ def main():
     except Exception as e:
         print(f"Warning: setMyCommands failed: {e}", file=sys.stderr)
 
-    print("🤖 家庭資產 Telegram Bot 已啟動！")
+    print("🤖 家庭資產 Telegram Bot (@ALANANNE_FAMILY_bot) 已啟動！", flush=True)
     offset = 0
 
     while True:
@@ -278,7 +291,7 @@ def main():
                         send_msg(
                             token,
                             chat_id,
-                            "🎉 *驗證成功！歡迎使用家庭資產小幫手*\n下方按鈕可隨時查詢最新共同基金與帳戶明細：",
+                            "🎉 <b>驗證成功！歡迎使用家庭資產小幫手</b>\n下方按鈕可隨時查詢最新共同基金與帳戶明細：",
                             main_keyboard(),
                         )
                         send_msg(token, chat_id, build_summary_text(), inline_web_button())
@@ -286,7 +299,7 @@ def main():
                         send_msg(
                             token,
                             chat_id,
-                            "🔐 請先輸入家庭資產**通關密碼**以啟用查詢權限（只需驗證這一次）：",
+                            "🔐 請先輸入家庭資產<b>通關密碼</b>以啟用查詢權限（只需驗證這一次）：",
                         )
                     continue
 
@@ -300,7 +313,7 @@ def main():
                     send_msg(
                         token,
                         chat_id,
-                        f"🌐 *家庭資產資金流視覺化儀表板*\n請點擊下方按鈕開啟（首次開啟輸入通關密碼後會自動記住）：",
+                        "🌐 <b>家庭資產資金流視覺化儀表板</b>\n請點擊下方按鈕開啟（首次開啟輸入通關密碼後會自動記住）：",
                         inline_web_button(),
                     )
                 elif text in ("/sync", "🔄 同步試算表"):
@@ -314,22 +327,23 @@ def main():
                             timeout=60,
                         )
                         if proc.returncode == 0:
-                            send_msg(token, chat_id, "✅ *Google 試算表與 GitHub 網站同步完成！*\n\n" + build_summary_text(), main_keyboard())
+                            send_msg(token, chat_id, "✅ <b>Google 試算表與 GitHub 網站同步完成！</b>\n\n" + build_summary_text(), main_keyboard())
                         else:
-                            send_msg(token, chat_id, f"❌ 同步失敗：\n```\n{proc.stderr[-500:] or proc.stdout[-500:]}\n```", main_keyboard())
+                            err_msg = html.escape(proc.stderr[-500:] or proc.stdout[-500:])
+                            send_msg(token, chat_id, f"❌ 同步失敗：\n<pre>{err_msg}</pre>", main_keyboard())
                     except Exception as e:
-                        send_msg(token, chat_id, f"❌ 同步發生錯誤：`{e}`", main_keyboard())
+                        send_msg(token, chat_id, f"❌ 同步發生錯誤：<code>{html.escape(str(e))}</code>", main_keyboard())
                 else:
                     send_msg(
                         token,
                         chat_id,
-                        "請點選下方按鈕或使用指令：\n• `/summary` 資產總覽\n• `/accounts` 帳戶明細\n• `/history` 歷月趨勢\n• `/sync` 同步試算表\n• `/web` 線上儀表板",
+                        "請點選下方按鈕或使用指令：\n• <code>/summary</code> 資產總覽\n• <code>/accounts</code> 帳戶明細\n• <code>/history</code> 歷月趨勢\n• <code>/sync</code> 同步試算表\n• <code>/web</code> 線上儀表板",
                         main_keyboard(),
                     )
         except KeyboardInterrupt:
             break
         except Exception as e:
-            print(f"Polling error: {e}", file=sys.stderr)
+            print(f"Polling error: {e}", file=sys.stderr, flush=True)
             time.sleep(5)
 
 
