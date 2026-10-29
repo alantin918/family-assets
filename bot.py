@@ -292,9 +292,14 @@ def write_travel_expenses(rows: list):
         writer = csv.DictWriter(f, fieldnames=TRAVEL_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
-    # 同步更新本機 data.enc.json
+    # 背景非阻塞更新本機 data.enc.json，讓 Telegram 按鈕秒回
     try:
-        subprocess.run([sys.executable, str(BASE_DIR / "sync.py"), "--encrypt-only"], cwd=BASE_DIR, timeout=10)
+        subprocess.Popen(
+            [sys.executable, str(BASE_DIR / "sync.py"), "--encrypt-only"],
+            cwd=BASE_DIR,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except Exception:
         pass
 
@@ -1100,44 +1105,58 @@ def main():
                     msg_id = cb["message"]["message_id"]
                     user_id = cb.get("from", {}).get("id", 0)
                     data_str = cb.get("data", "")
-                    try:
-                        tg_api(token, "answerCallbackQuery", {"callback_query_id": cb_id})
-                    except Exception:
-                        pass
+
                     if allowed_users and user_id not in allowed_users:
+                        try:
+                            tg_api(token, "answerCallbackQuery", {"callback_query_id": cb_id, "text": "請先驗證通關密碼"})
+                        except Exception:
+                            pass
                         continue
 
+                    toast_text = ""
                     if data_str.startswith("flow:"):
                         idx = int(data_str.split(":", 1)[1])
                         txt, kb = build_flows_text(idx)
                         edit_msg(token, chat_id, msg_id, txt, kb)
+                        toast_text = "已切換期間"
                     elif data_str.startswith("acct:"):
                         acct_name = data_str.split(":", 1)[1]
                         txt = build_single_account_text(acct_name)
                         edit_msg(token, chat_id, msg_id, txt, build_account_selector_keyboard())
+                        toast_text = f"已載入 {acct_name}"
                     elif data_str.startswith("tcard:") or data_str.startswith("tsplit:"):
                         parts = data_str.split(":")
                         action, exp_id, new_val = parts[0], int(parts[1]), parts[2]
                         rows = read_travel_expenses()
                         target = None
+                        changed = False
                         for r in rows:
                             if r["id"] == exp_id:
                                 if action == "tcard":
-                                    r["card_key"] = new_val
-                                    b_twd, f_twd, tot_twd, payer = calc_twd_and_fee(r["orig_amount"], r["currency"], new_val)
-                                    r["base_twd"] = b_twd
-                                    r["fee_twd"] = f_twd
-                                    r["total_twd"] = tot_twd
-                                    r["payer"] = payer
+                                    if r["card_key"] != new_val:
+                                        r["card_key"] = new_val
+                                        b_twd, f_twd, tot_twd, payer = calc_twd_and_fee(r["orig_amount"], r["currency"], new_val)
+                                        r["base_twd"] = b_twd
+                                        r["fee_twd"] = f_twd
+                                        r["total_twd"] = tot_twd
+                                        r["payer"] = payer
+                                        changed = True
+                                    toast_text = f"已切換為 {CARDS_INFO.get(new_val, {}).get('label', new_val)}"
                                 else:
-                                    r["split"] = new_val
+                                    if r["split"] != new_val:
+                                        r["split"] = new_val
+                                        changed = True
+                                    s_map = {"joint": "💑 共同平分", "alan": "👨 Alan 個人", "anne": "👩 Anne 個人"}
+                                    toast_text = f"已切換為 {s_map.get(new_val, new_val)}"
                                 target = r
                                 break
-                        if target:
+                        if target and changed:
                             write_travel_expenses(rows)
                             txt = format_expense_receipt(target, rows)
                             kb = expense_action_keyboard(target["id"], target["card_key"], target["split"])
                             edit_msg(token, chat_id, msg_id, txt, kb)
+                        elif not target:
+                            toast_text = "此筆紀錄已刪除"
                     elif data_str.startswith("tdel:"):
                         exp_id = int(data_str.split(":", 1)[1])
                         rows = read_travel_expenses()
@@ -1148,8 +1167,23 @@ def main():
                             edit_msg(
                                 token,
                                 chat_id,
+                                msg_id,
                                 f"🗑 已撤銷第 <code>#{exp_id}</code> 筆旅途記帳（{html.escape(deleted['item'])} {deleted['orig_amount']:g}{deleted['currency']}）",
                             )
+                            toast_text = f"🗑 已刪除 #{exp_id}"
+                        else:
+                            edit_msg(
+                                token,
+                                chat_id,
+                                msg_id,
+                                f"🗑 第 <code>#{exp_id}</code> 筆旅途記帳已撤銷",
+                            )
+                            toast_text = "此筆已撤銷"
+
+                    try:
+                        tg_api(token, "answerCallbackQuery", {"callback_query_id": cb_id, "text": toast_text})
+                    except Exception:
+                        pass
                     continue
 
                 msg = upd.get("message") or upd.get("edited_message")
