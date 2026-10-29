@@ -195,9 +195,44 @@ def load_rates() -> dict:
 
 
 def save_rate(cur_code: str, val: float):
+    cfg = {}
+    if TRAVEL_CFG.exists():
+        try:
+            cfg = json.loads(TRAVEL_CFG.read_text(encoding="utf-8"))
+        except Exception:
+            pass
     rates = load_rates()
     rates[cur_code.upper()] = val
-    TRAVEL_CFG.write_text(json.dumps({"rates": rates}, ensure_ascii=False, indent=2), encoding="utf-8")
+    cfg["rates"] = rates
+    TRAVEL_CFG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_now_str() -> str:
+    tz_mode = "TW"
+    if TRAVEL_CFG.exists():
+        try:
+            cfg = json.loads(TRAVEL_CFG.read_text(encoding="utf-8"))
+            tz_mode = cfg.get("tz", "TW")
+        except Exception:
+            pass
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    if tz_mode.upper() in ("UK", "IS", "UTC", "GMT"):
+        local_dt = utc_now
+        return local_dt.strftime("%Y-%m-%d %H:%M") + " (英冰)"
+    else:
+        local_dt = utc_now + datetime.timedelta(hours=8)
+        return local_dt.strftime("%Y-%m-%d %H:%M")
+
+
+def save_tz(tz_mode: str):
+    cfg = {}
+    if TRAVEL_CFG.exists():
+        try:
+            cfg = json.loads(TRAVEL_CFG.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    cfg["tz"] = tz_mode.upper()
+    TRAVEL_CFG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def tg_api(token: str, method: str, payload: dict = None, timeout: int = 35) -> dict:
@@ -412,7 +447,7 @@ def parse_quick_expense(text: str) -> dict:
     base_twd, fee_twd, total_twd, payer = calc_twd_and_fee(orig_amount, currency, card_key)
 
     return {
-        "date": datetime.datetime.now().strftime("%m/%d %H:%M"),
+        "date": get_now_str(),
         "item": item_name,
         "orig_amount": orig_amount,
         "currency": currency,
@@ -523,6 +558,7 @@ def format_expense_receipt(exp: dict, rows: list) -> str:
 
     lines = [
         f"✅ <b>已記帳 #{exp['id']}：{html.escape(exp['item'])}</b>",
+        f"• <b>時間</b>：<code>{exp['date']}</code>",
         f"• <b>金額</b>：<code>{orig_str}</code> ➔ <b><code>{fmt_nt(exp['total_twd'])}</code></b> {fee_str}",
         f"• <b>付款與歸屬</b>：{cinfo['label']} ｜ {split_names.get(exp['split'], '共同')}",
     ]
@@ -594,7 +630,7 @@ def build_trip_summary_text() -> str:
         for r in rows[-10:]:
             c_short = CARDS_INFO.get(r["card_key"], {}).get("label", r["card_key"]).split()[-1]
             lines.append(
-                f"• <code>#{r['id']}</code> {s_icon.get(r['split'], '💑')} <b>{html.escape(r['item'])}</b>｜"
+                f"• <code>#{r['id']}</code> <code>[{r['date']}]</code> {s_icon.get(r['split'], '💑')} <b>{html.escape(r['item'])}</b>｜"
                 f"<code>{r['orig_amount']:g}{r['currency']}</code> (<code>{fmt_nt(r['total_twd'])}</code>)｜{c_short}"
             )
 
@@ -1229,7 +1265,7 @@ def main():
                             send_msg(token, chat_id, f"找不到編號 #{exp_id} 的旅途記帳紀錄。", main_keyboard())
                         continue
 
-                # 2. 調整匯率指令 (/rate gbp 43.5)
+                # 2. 調整匯率指令 (/rate gbp 43.5) 與時區切換 (/tz uk | /tz tw)
                 if text.startswith("/rate "):
                     parts = text.split()
                     if len(parts) == 3:
@@ -1241,6 +1277,19 @@ def main():
                         except Exception:
                             send_msg(token, chat_id, "格式範例：<code>/rate gbp 43.5</code> 或 <code>/rate isk 0.2632</code>", main_keyboard())
                         continue
+
+                if text.startswith("/tz"):
+                    parts = text.split()
+                    mode = parts[1].upper() if len(parts) > 1 else ""
+                    if mode in ("UK", "IS", "UTC", "GMT"):
+                        save_tz("UK")
+                        send_msg(token, chat_id, f"🕒 已切換為 <b>英國／冰島當地時間 (UTC+0)</b>！目前時間：<code>{get_now_str()}</code>", main_keyboard())
+                    elif mode in ("TW", "TPE"):
+                        save_tz("TW")
+                        send_msg(token, chat_id, f"🕒 已切換為 <b>台灣時間 (UTC+8)</b>！目前時間：<code>{get_now_str()}</code>", main_keyboard())
+                    else:
+                        send_msg(token, chat_id, f"🕒 目前紀錄時間為：<code>{get_now_str()}</code>\n• 切換英冰當地時間：<code>/tz uk</code>\n• 切換台灣時間：<code>/tz tw</code>", main_keyboard())
+                    continue
 
                 # 3. 選單與固定指令
                 if text in ("/start", "/summary", "📊 資產總覽"):
