@@ -502,6 +502,14 @@ def extract_card_and_split(hint_text: str) -> tuple:
     return card_key, split_type, re.sub(r"\s+", " ", rem).strip()
 
 
+VISION_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
+
+
 def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = "") -> dict:
     f_info = tg_api(token, "getFile", {"file_id": file_id})
     file_path = f_info["result"]["file_path"]
@@ -516,7 +524,6 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
         "注意：若看到 kr / ISK 為冰島克朗 ISK；看到 £ / GBP 為英鎊 GBP；看到 NT$ / TWD 為 TWD。請抓最終總計金額 (Total)。"
     )
 
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
     payload = {
         "contents": [{
             "parts": [
@@ -525,13 +532,28 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
             ]
         }]
     }
-    req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=25) as resp:
-        res = json.loads(resp.read().decode("utf-8"))
 
-    raw_txt = res["candidates"][0]["content"]["parts"][0]["text"].strip()
-    raw_txt = re.sub(r"^```(?:json)?|```$", "", raw_txt, flags=re.MULTILINE).strip()
-    parsed_json = json.loads(raw_txt)
+    parsed_json = None
+    used_model = VISION_MODELS[0]
+    last_err = None
+    for model_name in VISION_MODELS:
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+            raw_txt = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+            raw_txt = re.sub(r"^```(?:json)?|```$", "", raw_txt, flags=re.MULTILINE).strip()
+            parsed_json = json.loads(raw_txt)
+            used_model = model_name
+            break
+        except Exception as e:
+            last_err = e
+            print(f"[OCR fallback] {model_name} failed: {e}", flush=True)
+            continue
+
+    if parsed_json is None:
+        raise RuntimeError(f"所有視覺模型皆失敗: {last_err}")
 
     orig_amount = float(parsed_json.get("amount") or 0)
     currency = str(parsed_json.get("currency") or "GBP").upper()
@@ -556,6 +578,7 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
         "payer": payer,
         "split": split_type,
         "_img_bytes": img_bytes,
+        "_model": used_model,
     }
 
 
@@ -1396,10 +1419,11 @@ def main():
                         send_msg(token, chat_id, "❌ .env 尚未設定 GEMINI_API_KEY，無法辨識照片。", main_keyboard())
                         continue
                     best_photo = photos[-1]
-                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 AI 自動辨識品項與外幣金額...</i>")
+                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 Gemini 3.5 Flash 自動辨識品項與外幣金額...</i>")
                     try:
                         parsed = ocr_receipt_photo(token, gemini_key, best_photo["file_id"], caption)
                         img_bytes = parsed.pop("_img_bytes", b"")
+                        used_model = parsed.pop("_model", "gemini-3.5-flash")
                         rows = read_travel_expenses()
                         next_id = (max(r["id"] for r in rows) + 1) if rows else 1
                         parsed["id"] = next_id
@@ -1412,7 +1436,7 @@ def main():
                             safe_name = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_\-]+", "_", parsed["item"])[:30]
                             (rec_dir / f"receipt_{next_id:03d}_{safe_name}.jpg").write_bytes(img_bytes)
 
-                        receipt_txt = format_expense_receipt(parsed, rows)
+                        receipt_txt = format_expense_receipt(parsed, rows) + f"\n🤖 辨識模型：<code>{html.escape(used_model)}</code>"
                         kb = expense_action_keyboard(next_id, parsed["card_key"], parsed["split"])
                         send_msg(token, chat_id, receipt_txt, kb)
                     except Exception as e:
