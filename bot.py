@@ -259,6 +259,7 @@ def main_keyboard() -> dict:
             [{"text": "🔄 同步試算表"}, {"text": "🌐 線上儀表板"}],
         ],
         "resize_keyboard": True,
+        "one_time_keyboard": True,
     }
 
 
@@ -582,6 +583,14 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
     }
 
 
+def expense_collapsed_keyboard(exp_id: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": f"✏️ 展開修改卡片／分帳 (#{exp_id})", "callback_data": f"texpand:{exp_id}"}]
+        ]
+    }
+
+
 def expense_action_keyboard(exp_id: int, cur_card: str, cur_split: str) -> dict:
     def c_lbl(k, short):
         return f"✅{short}" if cur_card == k else short
@@ -608,6 +617,9 @@ def expense_action_keyboard(exp_id: int, cur_card: str, cur_split: str) -> dict:
                 {"text": s_lbl("alan", "👨Alan個人"), "callback_data": f"tsplit:{exp_id}:alan"},
                 {"text": s_lbl("anne", "👩Anne個人"), "callback_data": f"tsplit:{exp_id}:anne"},
                 {"text": "🗑撤銷", "callback_data": f"tdel:{exp_id}"},
+            ],
+            [
+                {"text": "🔽 完成並收起按鈕", "callback_data": f"tfold:{exp_id}"},
             ],
         ]
     }
@@ -1242,6 +1254,7 @@ def main():
     try:
         tg_api(token, "setMyCommands", {
             "commands": [
+                {"command": "menu", "description": "🎛️ 喚起底部功能按鈕選單"},
                 {"command": "trip", "description": "✈️ 英冰旅途記帳＆分帳結算總覽"},
                 {"command": "cards", "description": "💳 信用卡高回饋額度雷達（剩餘額度進度條）"},
                 {"command": "summary", "description": "📊 最新家庭資產與共同基金總覽"},
@@ -1310,21 +1323,43 @@ def main():
                                         r["total_twd"] = tot_twd
                                         r["payer"] = payer
                                         changed = True
-                                    toast_text = f"已切換為 {CARDS_INFO.get(new_val, {}).get('label', new_val)}"
+                                    toast_text = f"已切換為 {CARDS_INFO.get(new_val, {}).get('label', new_val)}（已收起按鈕）"
                                 else:
                                     if r["split"] != new_val:
                                         r["split"] = new_val
                                         changed = True
                                     s_map = {"joint": "💑 共同平分", "alan": "👨 Alan 個人", "anne": "👩 Anne 個人"}
-                                    toast_text = f"已切換為 {s_map.get(new_val, new_val)}"
+                                    toast_text = f"已切換為 {s_map.get(new_val, new_val)}（已收起按鈕）"
                                 target = r
                                 break
-                        if target and changed:
-                            write_travel_expenses(rows)
+                        if target:
+                            if changed:
+                                write_travel_expenses(rows)
+                            txt = format_expense_receipt(target, rows)
+                            kb = expense_collapsed_keyboard(target["id"])
+                            edit_msg(token, chat_id, msg_id, txt, kb)
+                        else:
+                            toast_text = "此筆紀錄已刪除"
+                    elif data_str.startswith("tfold:"):
+                        exp_id = int(data_str.split(":", 1)[1])
+                        rows = read_travel_expenses()
+                        target = next((r for r in rows if r["id"] == exp_id), None)
+                        if target:
+                            txt = format_expense_receipt(target, rows)
+                            edit_msg(token, chat_id, msg_id, txt, expense_collapsed_keyboard(exp_id))
+                            toast_text = "已收起按鈕"
+                        else:
+                            toast_text = "此筆紀錄已刪除"
+                    elif data_str.startswith("texpand:"):
+                        exp_id = int(data_str.split(":", 1)[1])
+                        rows = read_travel_expenses()
+                        target = next((r for r in rows if r["id"] == exp_id), None)
+                        if target:
                             txt = format_expense_receipt(target, rows)
                             kb = expense_action_keyboard(target["id"], target["card_key"], target["split"])
                             edit_msg(token, chat_id, msg_id, txt, kb)
-                        elif not target:
+                            toast_text = f"已展開 #{exp_id} 修改按鈕"
+                        else:
                             toast_text = "此筆紀錄已刪除"
                     elif data_str.startswith("tdel:"):
                         exp_id = int(data_str.split(":", 1)[1])
@@ -1490,7 +1525,9 @@ def main():
                     continue
 
                 # 3. 選單與固定指令
-                if text in ("/start", "/summary", "📊 資產總覽"):
+                if text in ("/menu", "選單", "按鈕"):
+                    send_msg(token, chat_id, "🎛️ <b>已為你展開底部功能選單！</b>（點擊任一按鈕後會自動收起隱藏）", main_keyboard())
+                elif text in ("/start", "/summary", "📊 資產總覽"):
                     send_msg(token, chat_id, build_summary_text(), main_keyboard())
                 elif text in ("/trip", "✈️ 旅途記帳＆結算"):
                     send_msg(token, chat_id, build_trip_summary_text(), trip_summary_inline_kb() or main_keyboard())
