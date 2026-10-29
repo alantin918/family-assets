@@ -8,5 +8,6 @@ balances.csv
 ledger.csv
 travel_expenses.csv
 travel_config.json
+receipts/
 .bot.pid
 .authorized_users.json

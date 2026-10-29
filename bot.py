@@ -17,6 +17,7 @@
   • 🌐 線上儀表板連結 (/web)
 """
 
+import base64
 import csv
 import datetime
 import html
@@ -457,6 +458,104 @@ def parse_quick_expense(text: str) -> dict:
         "card_key": card_key,
         "payer": payer,
         "split": split_type,
+    }
+
+
+def extract_card_and_split(hint_text: str) -> tuple:
+    rem = hint_text.strip()
+    card_key = "Al_星展eco"
+    card_patterns = [
+        (r"\b(chase|美國卡|an\s*chase)\b", "An_Chase"),
+        (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
+        (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
+        (r"(al|alan|倫)?\s*現金", "Cash_Al"),
+        (r"(al|alan|倫)?\s*(永豐|幣倍|大戶|dawho)", "Al_永豐幣倍"),
+        (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
+        (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
+        (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
+        (r"(al|alan|倫)?\s*(星展|eco)", "Al_星展eco"),
+    ]
+    for pat, ckey in card_patterns:
+        cm = re.search(pat, rem, re.IGNORECASE)
+        if cm:
+            card_key = ckey
+            rem = (rem[:cm.start()] + " " + rem[cm.end():]).strip()
+            break
+
+    split_type = "joint"
+    split_patterns = [
+        (r"(an|anne|安|老婆|太太)\s*(個人|自己|自付|獨享)", "anne"),
+        (r"(al|alan|倫)\s*(個人|自己|自付|獨享)", "alan"),
+        (r"\b(個人|自己|自付)\b", "owner"),
+        (r"\b(共同|平分|公費|一起)\b", "joint"),
+    ]
+    for pat, stype in split_patterns:
+        sm = re.search(pat, rem, re.IGNORECASE)
+        if sm:
+            if stype == "owner":
+                owner = CARDS_INFO[card_key]["owner"]
+                split_type = "anne" if owner == "Anne" else "alan"
+            else:
+                split_type = stype
+            rem = (rem[:sm.start()] + " " + rem[sm.end():]).strip()
+            break
+    return card_key, split_type, re.sub(r"\s+", " ", rem).strip()
+
+
+def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = "") -> dict:
+    f_info = tg_api(token, "getFile", {"file_id": file_id})
+    file_path = f_info["result"]["file_path"]
+    dl_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    with urllib.request.urlopen(dl_url, timeout=25) as resp:
+        img_bytes = resp.read()
+
+    b64_img = base64.b64encode(img_bytes).decode("ascii")
+    prompt = (
+        "請辨識這張旅遊收據、發票、菜單或刷卡通知截圖，並只回傳純 JSON 格式（不要加 markdown 區塊）：\n"
+        '{"item": "繁體中文店家或品項簡稱(例如：Bónus超市採買、龍蝦湯、倫敦地鐵)", "amount": 數字總額, "currency": "ISK或GBP或USD或EUR或JPY或TWD"}\n'
+        "注意：若看到 kr / ISK 為冰島克朗 ISK；看到 £ / GBP 為英鎊 GBP；看到 NT$ / TWD 為 TWD。請抓最終總計金額 (Total)。"
+    )
+
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64_img}},
+            ]
+        }]
+    }
+    req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+
+    raw_txt = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+    raw_txt = re.sub(r"^```(?:json)?|```$", "", raw_txt, flags=re.MULTILINE).strip()
+    parsed_json = json.loads(raw_txt)
+
+    orig_amount = float(parsed_json.get("amount") or 0)
+    currency = str(parsed_json.get("currency") or "GBP").upper()
+    if currency not in DEFAULT_RATES:
+        currency = "GBP"
+
+    card_key, split_type, extra_note = extract_card_and_split(caption)
+    ai_item = str(parsed_json.get("item") or "拍照收據").strip()
+    item_name = f"{extra_note} ({ai_item})" if extra_note else f"📸 {ai_item}"
+
+    base_twd, fee_twd, total_twd, payer = calc_twd_and_fee(orig_amount, currency, card_key)
+
+    return {
+        "date": get_now_str(),
+        "item": item_name,
+        "orig_amount": orig_amount,
+        "currency": currency,
+        "base_twd": base_twd,
+        "fee_twd": fee_twd,
+        "total_twd": total_twd,
+        "card_key": card_key,
+        "payer": payer,
+        "split": split_type,
+        "_img_bytes": img_bytes,
     }
 
 
@@ -1228,17 +1327,20 @@ def main():
                 chat_id = msg["chat"]["id"]
                 user_id = msg.get("from", {}).get("id", 0)
                 text = (msg.get("text") or "").strip()
-                if not text:
+                photos = msg.get("photo") or []
+                caption = (msg.get("caption") or "").strip()
+
+                if not text and not photos:
                     continue
 
                 # 權限檢查
                 if allowed_users and user_id not in allowed_users:
-                    if text in valid_passcodes:
+                    if text in valid_passcodes or caption in valid_passcodes:
                         save_authorized_user(user_id, allowed_users)
                         send_msg(
                             token,
                             chat_id,
-                            "🎉 <b>驗證成功！歡迎使用家庭資產＆旅途快記小幫手</b>\n下方按鈕可隨時查詢，或直接打字如 <code>龍蝦湯 4500isk Al星展</code> 5 秒記帳：",
+                            "🎉 <b>驗證成功！歡迎使用家庭資產＆旅途快記小幫手</b>\n下方按鈕可隨時查詢，或直接打字／拍收據 5 秒記帳：",
                             main_keyboard(),
                         )
                         send_msg(token, chat_id, build_trip_summary_text(), inline_web_button())
@@ -1247,6 +1349,41 @@ def main():
                             token,
                             chat_id,
                             "🔐 請先輸入家庭資產<b>通關密碼</b>以啟用查詢權限（只需驗證這一次）：",
+                        )
+                    continue
+
+                # 0. 拍照記帳（收到收據或刷卡截圖照片）
+                if photos:
+                    gemini_key = env.get("GEMINI_API_KEY", "").strip()
+                    if not gemini_key:
+                        send_msg(token, chat_id, "❌ .env 尚未設定 GEMINI_API_KEY，無法辨識照片。", main_keyboard())
+                        continue
+                    best_photo = photos[-1]
+                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 AI 自動辨識品項與外幣金額...</i>")
+                    try:
+                        parsed = ocr_receipt_photo(token, gemini_key, best_photo["file_id"], caption)
+                        img_bytes = parsed.pop("_img_bytes", b"")
+                        rows = read_travel_expenses()
+                        next_id = (max(r["id"] for r in rows) + 1) if rows else 1
+                        parsed["id"] = next_id
+                        rows.append(parsed)
+                        write_travel_expenses(rows)
+
+                        if img_bytes:
+                            rec_dir = BASE_DIR / "receipts"
+                            rec_dir.mkdir(exist_ok=True)
+                            safe_name = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_\-]+", "_", parsed["item"])[:30]
+                            (rec_dir / f"receipt_{next_id:03d}_{safe_name}.jpg").write_bytes(img_bytes)
+
+                        receipt_txt = format_expense_receipt(parsed, rows)
+                        kb = expense_action_keyboard(next_id, parsed["card_key"], parsed["split"])
+                        send_msg(token, chat_id, receipt_txt, kb)
+                    except Exception as e:
+                        send_msg(
+                            token,
+                            chat_id,
+                            f"❌ 照片辨識失敗（<code>{html.escape(str(e))}</code>）\n你可以直接打字輸入：<code>品項 金額幣別</code>",
+                            main_keyboard(),
                         )
                     continue
 
