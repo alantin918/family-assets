@@ -682,6 +682,17 @@ def format_expense_receipt(exp: dict, rows: list) -> str:
     return "\n".join(lines)
 
 
+def trip_summary_inline_kb() -> dict:
+    rows = read_travel_expenses()
+    if not rows:
+        return None
+    return {
+        "inline_keyboard": [
+            [{"text": "🧹 清空測試資料 / 重置旅途帳本", "callback_data": "tclear:ask"}]
+        ]
+    }
+
+
 def build_trip_summary_text() -> str:
     rows = read_travel_expenses()
     stats = calc_trip_settlement(rows)
@@ -1314,6 +1325,32 @@ def main():
                                 f"🗑 第 <code>#{exp_id}</code> 筆旅途記帳已撤銷",
                             )
                             toast_text = "此筆已撤銷"
+                    elif data_str == "tclear:ask":
+                        rows = read_travel_expenses()
+                        edit_msg(
+                            token,
+                            chat_id,
+                            msg_id,
+                            f"⚠️ <b>確定要清空目前全部 {len(rows)} 筆旅途記帳嗎？</b>\n（清空前會自動幫你在電腦備份一份 <code>travel_expenses.bak.csv</code>）",
+                            {
+                                "inline_keyboard": [
+                                    [
+                                        {"text": "⚠️ 確定清空歸零", "callback_data": "tclear:confirm"},
+                                        {"text": "✖️ 取消返回", "callback_data": "tclear:cancel"},
+                                    ]
+                                ]
+                            },
+                        )
+                        toast_text = "請確認是否清空"
+                    elif data_str == "tclear:confirm":
+                        if TRAVEL_CSV.exists():
+                            (BASE_DIR / "travel_expenses.bak.csv").write_bytes(TRAVEL_CSV.read_bytes())
+                        write_travel_expenses([])
+                        edit_msg(token, chat_id, msg_id, "🧹 <b>已清空全部旅途記帳資料！</b>（帳本與刷卡額度已歸零）")
+                        toast_text = "已清空歸零"
+                    elif data_str == "tclear:cancel":
+                        edit_msg(token, chat_id, msg_id, build_trip_summary_text(), trip_summary_inline_kb())
+                        toast_text = "已取消"
 
                     try:
                         tg_api(token, "answerCallbackQuery", {"callback_query_id": cb_id, "text": toast_text})
@@ -1432,7 +1469,22 @@ def main():
                 if text in ("/start", "/summary", "📊 資產總覽"):
                     send_msg(token, chat_id, build_summary_text(), main_keyboard())
                 elif text in ("/trip", "✈️ 旅途記帳＆結算"):
-                    send_msg(token, chat_id, build_trip_summary_text(), main_keyboard())
+                    send_msg(token, chat_id, build_trip_summary_text(), trip_summary_inline_kb() or main_keyboard())
+                elif text in ("/clear", "/clear_trip", "清空", "清空旅途"):
+                    rows = read_travel_expenses()
+                    send_msg(
+                        token,
+                        chat_id,
+                        f"⚠️ <b>確定要清空目前全部 {len(rows)} 筆旅途記帳嗎？</b>",
+                        {
+                            "inline_keyboard": [
+                                [
+                                    {"text": "⚠️ 確定清空歸零", "callback_data": "tclear:confirm"},
+                                    {"text": "✖️ 取消返回", "callback_data": "tclear:cancel"},
+                                ]
+                            ]
+                        },
+                    )
                 elif text in ("/cards", "💳 刷卡額度雷達"):
                     send_msg(token, chat_id, build_cards_radar_text(), main_keyboard())
                 elif text in ("/joint", "💑 共同基金分析"):
