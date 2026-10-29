@@ -504,9 +504,9 @@ def extract_card_and_split(hint_text: str) -> tuple:
 
 
 VISION_MODELS = [
-    "gemini-3.5-flash",
     "gemini-3-flash-preview",
     "gemini-2.5-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash-lite",
 ]
 
@@ -541,7 +541,7 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
         req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=12) as resp:
                 res = json.loads(resp.read().decode("utf-8"))
             raw_txt = res["candidates"][0]["content"]["parts"][0]["text"].strip()
             raw_txt = re.sub(r"^```(?:json)?|```$", "", raw_txt, flags=re.MULTILINE).strip()
@@ -1454,11 +1454,11 @@ def main():
                         send_msg(token, chat_id, "❌ .env 尚未設定 GEMINI_API_KEY，無法辨識照片。", main_keyboard())
                         continue
                     best_photo = photos[-1]
-                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 Gemini 3.5 Flash 自動辨識品項與外幣金額...</i>")
+                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 Gemini 3 Flash 極速辨識品項與外幣金額...</i>")
                     try:
                         parsed = ocr_receipt_photo(token, gemini_key, best_photo["file_id"], caption)
                         img_bytes = parsed.pop("_img_bytes", b"")
-                        used_model = parsed.pop("_model", "gemini-3.5-flash")
+                        used_model = parsed.pop("_model", "gemini-3-flash-preview")
                         rows = read_travel_expenses()
                         next_id = (max(r["id"] for r in rows) + 1) if rows else 1
                         parsed["id"] = next_id
