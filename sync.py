@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 從 Google 試算表（透過 Apps Script Web App）自動抓取「財務」分頁的最新每月資產快照與共同基金帳本，
-更新本機的 balances.csv、summary.csv、ledger.csv，並產生加密後的 data.enc.json 供 GitHub Pages 網站讀取。
+更新本機的 balances.csv、summary.csv、ledger.csv，並連同旅途記帳 travel_expenses.csv
+一併產生加密後的 data.enc.json 供 GitHub Pages 網站讀取。
 """
 
 import base64
@@ -21,6 +22,7 @@ ENV_PATH = BASE_DIR / ".env"
 BALANCES_CSV = BASE_DIR / "balances.csv"
 SUMMARY_CSV = BASE_DIR / "summary.csv"
 LEDGER_CSV = BASE_DIR / "ledger.csv"
+TRAVEL_CSV = BASE_DIR / "travel_expenses.csv"
 ENCRYPTED_JSON = BASE_DIR / "data.enc.json"
 
 # 帳戶固定順序與分類（與原 balances.csv 完全一致）
@@ -92,12 +94,20 @@ def encrypt_payload(plaintext_bytes: bytes, passcode: str) -> dict:
     }
 
 
+def read_travel_rows() -> list:
+    if not TRAVEL_CSV.exists():
+        return []
+    with open(TRAVEL_CSV, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
 def write_encrypted_json(summary_rows: list, balance_rows: list, ledger_rows: list, env: dict):
     payload_obj = {
         "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "summary": summary_rows,
         "balances": balance_rows,
         "ledger": ledger_rows,
+        "travel": read_travel_rows(),
     }
     plaintext_bytes = json.dumps(payload_obj, ensure_ascii=False).encode("utf-8")
 
@@ -122,13 +132,13 @@ def fetch_sheet_data(url: str, key: str) -> dict:
     raise RuntimeError("Apps Script 回傳 Unauthorized，請確認 .env 中的 APPS_SCRIPT_KEY 與部署版本一致。")
 
 
-def git_push_update(latest_date: str):
+def git_push_update(commit_msg: str):
     if not (BASE_DIR / ".git").exists():
         return
     subprocess.run(["git", "add", "data.enc.json", "index.html", "README.md", "sync.py", "bot.py", ".gitignore"], cwd=BASE_DIR, check=False)
     status = subprocess.check_output(["git", "status", "--porcelain"], cwd=BASE_DIR).decode("utf-8").strip()
     if status:
-        subprocess.run(["git", "commit", "-m", f"更新家庭資產快照與參數 ({latest_date})"], cwd=BASE_DIR, check=True)
+        subprocess.run(["git", "commit", "-m", commit_msg], cwd=BASE_DIR, check=True)
         subprocess.run(["git", "push"], cwd=BASE_DIR, check=True)
         print("🚀 已自動推送加密資料並更新 GitHub Pages 網站！")
     else:
@@ -155,6 +165,8 @@ def main():
                 ledger_rows = list(csv.DictReader(f))
         write_encrypted_json(summary_rows, balance_rows, ledger_rows, env)
         print("🔒 已由本機 CSV 重新產生加密檔 data.enc.json")
+        if "--push" in sys.argv:
+            git_push_update("更新加密資料檔 data.enc.json")
         return
 
     url = env.get("APPS_SCRIPT_URL", "")
@@ -272,7 +284,7 @@ def main():
     print(f"   • Alan 可用：NT${latest['after_joint']:,}")
 
     if "--push" in sys.argv:
-        git_push_update(latest["date"])
+        git_push_update(f"更新家庭資產快照與參數 ({latest['date']})")
 
 
 if __name__ == "__main__":

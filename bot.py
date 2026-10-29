@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """
-家庭資產 Telegram Bot (@ALANANNE_FAMILY_bot)
+家庭資產 ＆ 英冰旅途快記 Telegram Bot (@ALANANNE_FAMILY_bot)
 支援功能：
+  • ✈️ 直接輸入「品項 金額幣別 [卡別] [共同/個人]」5 秒快記（如：龍蝦湯 4500isk Al星展）
+  • 💳 刷卡額度雷達 (/cards) — 追蹤星展 eco 1.5萬、永豐幣倍 2萬、傳說對決 1.25萬、Chase 免手續費
+  • ✈️ 旅途分帳與明細 (/trip) — 自動算 1.5% 海外手續費、共同 vs 個人、誰墊多少錢
   • 📊 資產總覽 (/start, /summary)
-  • 💑 共同基金分析 (/joint) — 現金覆蓋率、股票壓力測試、50/60/100萬目標倒數
+  • 💑 共同基金分析 (/joint)
   • 🏦 帳戶明細 (/accounts)
-  • 💸 本期資金流向 (/flows) — 支援切換各期區間流入/流出排行
-  • 📐 財務健康指標 (/stats) — 累計成長率、月均淨增、歷史最高/最低極值、集中度
-  • 🔍 單一帳戶查詢 (/acct) — 點選按鈕查看單一帳戶歷月水位
-  • 📒 共同基金帳本 (/ledger) — 試算表左側「夢想撲滿」近期收支紀錄
+  • 💸 本期資金流向 (/flows)
+  • 📐 財務健康指標 (/stats)
+  • 🔍 單一帳戶查詢 (/acct)
+  • 📒 共同基金帳本 (/ledger)
   • 📈 歷月趨勢 (/history)
   • 🔄 同步試算表＋更新網站 (/sync)
   • 🌐 線上儀表板連結 (/web)
 """
 
 import csv
+import datetime
 import html
 import json
 import math
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -42,9 +47,91 @@ ENV_PATH = BASE_DIR / ".env"
 SUMMARY_CSV = BASE_DIR / "summary.csv"
 BALANCES_CSV = BASE_DIR / "balances.csv"
 LEDGER_CSV = BASE_DIR / "ledger.csv"
+TRAVEL_CSV = BASE_DIR / "travel_expenses.csv"
+TRAVEL_CFG = BASE_DIR / "travel_config.json"
 AUTH_FILE = BASE_DIR / ".authorized_users.json"
 PID_FILE = BASE_DIR / ".bot.pid"
 WEB_URL = "https://alantin918.github.io/family-assets/"
+
+# 預設匯率（依據歐洲旅行計劃書 web-v6 設定）
+DEFAULT_RATES = {
+    "GBP": 43.43,
+    "ISK": 0.2632,
+    "USD": 31.83,
+    "EUR": 34.50,
+    "JPY": 0.215,
+    "TWD": 1.0,
+}
+
+# 行前已付未結代墊差額（依據 HANDOFF.md：Anne 需給 Alan 36,488 元）
+PRE_TRIP_ANNE_OWES_ALAN = 36488
+
+# 旅途信用卡設定：(持卡人, 顯示名稱, 回饋說明, 封頂上限TWD(0表無上限), 海外手續費率)
+CARDS_INFO = {
+    "Al_星展eco": {
+        "owner": "Alan",
+        "label": "👨 Al星展eco",
+        "desc": "歐洲實體 5%",
+        "limit": 15000,
+        "fee_rate": 0.015,
+    },
+    "Al_永豐幣倍": {
+        "owner": "Alan",
+        "label": "👨 Al永豐幣倍",
+        "desc": "國外實體 6%",
+        "limit": 20000,
+        "fee_rate": 0.015,
+    },
+    "Al_星展傳說": {
+        "owner": "Alan",
+        "label": "👨 Al星展傳說",
+        "desc": "海外 5%",
+        "limit": 12500,
+        "fee_rate": 0.015,
+    },
+    "Al_聯邦賴點": {
+        "owner": "Alan",
+        "label": "👨 Al聯邦賴點",
+        "desc": "外幣 3% 無上限",
+        "limit": 0,
+        "fee_rate": 0.015,
+    },
+    "Al_其他卡": {
+        "owner": "Alan",
+        "label": "👨 Al台新/玉山",
+        "desc": "海外 3.3~4.5%",
+        "limit": 0,
+        "fee_rate": 0.015,
+    },
+    "An_星展eco": {
+        "owner": "Anne",
+        "label": "👩 An星展eco",
+        "desc": "歐洲實體 5%",
+        "limit": 15000,
+        "fee_rate": 0.015,
+    },
+    "An_Chase": {
+        "owner": "Anne",
+        "label": "👩 An Chase",
+        "desc": "美國卡免手續費/餐廳3x",
+        "limit": 0,
+        "fee_rate": 0.0,
+    },
+    "Cash_Al": {
+        "owner": "Alan",
+        "label": "💵 Al現金",
+        "desc": "免手續費",
+        "limit": 0,
+        "fee_rate": 0.0,
+    },
+    "Cash_An": {
+        "owner": "Anne",
+        "label": "💵 An現金",
+        "desc": "免手續費",
+        "limit": 0,
+        "fee_rate": 0.0,
+    },
+}
 
 
 def load_env(path: Path) -> dict:
@@ -96,6 +183,23 @@ def save_authorized_user(uid: int, allowed: set):
     AUTH_FILE.write_text(json.dumps(sorted(list(allowed))), encoding="utf-8")
 
 
+def load_rates() -> dict:
+    rates = dict(DEFAULT_RATES)
+    if TRAVEL_CFG.exists():
+        try:
+            cfg = json.loads(TRAVEL_CFG.read_text(encoding="utf-8"))
+            rates.update(cfg.get("rates", {}))
+        except Exception:
+            pass
+    return rates
+
+
+def save_rate(cur_code: str, val: float):
+    rates = load_rates()
+    rates[cur_code.upper()] = val
+    TRAVEL_CFG.write_text(json.dumps({"rates": rates}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def tg_api(token: str, method: str, payload: dict = None, timeout: int = 35) -> dict:
     url = f"https://api.telegram.org/bot{token}/{method}"
     data = None
@@ -111,6 +215,7 @@ def tg_api(token: str, method: str, payload: dict = None, timeout: int = 35) -> 
 def main_keyboard() -> dict:
     return {
         "keyboard": [
+            [{"text": "✈️ 旅途記帳＆結算"}, {"text": "💳 刷卡額度雷達"}],
             [{"text": "📊 資產總覽"}, {"text": "💑 共同基金分析"}],
             [{"text": "🏦 帳戶明細"}, {"text": "💸 本期資金流向"}],
             [{"text": "📐 財務健康指標"}, {"text": "🔍 單一帳戶查詢"}],
@@ -142,6 +247,405 @@ def fmt_signed(v: int) -> str:
         return f"-NT${abs(v):,}"
     return "±NT$0"
 
+
+def progress_bar(used: int, limit: int, width: int = 10) -> str:
+    if limit <= 0:
+        return "∞ 無上限"
+    ratio = min(1.0, max(0.0, used / limit))
+    filled = round(ratio * width)
+    bar = "█" * filled + "░" * (width - filled)
+    return f"{bar} {used / limit * 100:.0f}%"
+
+
+# ─── 旅途記帳讀寫與解析 ───
+
+TRAVEL_FIELDS = [
+    "id", "date", "item", "orig_amount", "currency",
+    "base_twd", "fee_twd", "total_twd", "card_key", "payer", "split"
+]
+
+
+def read_travel_expenses() -> list:
+    if not TRAVEL_CSV.exists():
+        return []
+    with open(TRAVEL_CSV, encoding="utf-8") as f:
+        rows = []
+        for r in csv.DictReader(f):
+            rows.append({
+                "id": int(r["id"]),
+                "date": r["date"],
+                "item": r["item"],
+                "orig_amount": float(r["orig_amount"]),
+                "currency": r["currency"],
+                "base_twd": int(r["base_twd"]),
+                "fee_twd": int(r["fee_twd"]),
+                "total_twd": int(r["total_twd"]),
+                "card_key": r["card_key"],
+                "payer": r["payer"],
+                "split": r["split"],  # 'joint', 'alan', 'anne'
+            })
+        return rows
+
+
+def write_travel_expenses(rows: list):
+    with open(TRAVEL_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=TRAVEL_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    # 同步更新本機 data.enc.json
+    try:
+        subprocess.run([sys.executable, str(BASE_DIR / "sync.py"), "--encrypt-only"], cwd=BASE_DIR, timeout=10)
+    except Exception:
+        pass
+
+
+def calc_twd_and_fee(orig_amount: float, currency: str, card_key: str) -> tuple:
+    rates = load_rates()
+    rate = rates.get(currency.upper(), 1.0)
+    base_twd = round(orig_amount * rate)
+    card = CARDS_INFO.get(card_key, CARDS_INFO["Al_星展eco"])
+    # 台幣消費或免手續費卡不收 1.5%
+    fee_rate = 0.0 if currency.upper() == "TWD" else card["fee_rate"]
+    fee_twd = round(base_twd * fee_rate)
+    return base_twd, fee_twd, base_twd + fee_twd, card["owner"]
+
+
+def parse_quick_expense(text: str) -> dict:
+    """
+    解析自然語言記帳：
+      例如：
+        「龍蝦湯 4500isk Al星展」
+        「外套 85gbp An個人 Chase」
+        「咖啡 £4.5」
+        「記 停車 1200isk」
+    回傳 dict 或 None（若非記帳訊息）
+    """
+    s = text.strip()
+    if s.startswith("/"):
+        if s.startswith("/add "):
+            s = s[5:].strip()
+        else:
+            return None
+
+    if s.startswith("記 ") or s.startswith("記帳 "):
+        s = re.sub(r"^記帳?\s+", "", s)
+
+    # 匹配金額與幣別：支援 £45, $20, 4500isk, 85.5gbp, 1200克朗, 50英鎊, 300台幣
+    cur_pattern = re.compile(
+        r"(?:(?P<sym>[£$€¥])\s*(?P<num1>\d+(?:\.\d+)?))|"
+        r"(?:(?P<num2>\d+(?:\.\d+)?)\s*(?P<unit>isk|kr|克朗|冰島幣|gbp|英鎊|鎊|usd|美金|美元|eur|歐元|jpy|日圓|日幣|twd|ntd|nt|台幣|元)\b)",
+        re.IGNORECASE,
+    )
+    m = cur_pattern.search(s)
+    if not m:
+        return None
+
+    if m.group("sym"):
+        sym = m.group("sym")
+        orig_amount = float(m.group("num1"))
+        sym_map = {"£": "GBP", "$": "USD", "€": "EUR", "¥": "JPY"}
+        currency = sym_map.get(sym, "USD")
+    else:
+        orig_amount = float(m.group("num2"))
+        u = m.group("unit").lower()
+        if u in ("isk", "kr", "克朗", "冰島幣"):
+            currency = "ISK"
+        elif u in ("gbp", "英鎊", "鎊"):
+            currency = "GBP"
+        elif u in ("usd", "美金", "美元"):
+            currency = "USD"
+        elif u in ("eur", "歐元"):
+            currency = "EUR"
+        elif u in ("jpy", "日圓", "日幣"):
+            currency = "JPY"
+        else:
+            currency = "TWD"
+
+    # 移除金額與幣別字串
+    rem = (s[:m.start()] + " " + s[m.end():]).strip()
+
+    # 識別卡片關鍵字
+    card_key = "Al_星展eco"
+    card_patterns = [
+        (r"\b(chase|美國卡|an\s*chase)\b", "An_Chase"),
+        (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
+        (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
+        (r"(al|alan|倫)?\s*現金", "Cash_Al"),
+        (r"(al|alan|倫)?\s*(永豐|幣倍|大戶|dawho)", "Al_永豐幣倍"),
+        (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
+        (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
+        (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
+        (r"(al|alan|倫)?\s*(星展|eco)", "Al_星展eco"),
+    ]
+    for pat, ckey in card_patterns:
+        cm = re.search(pat, rem, re.IGNORECASE)
+        if cm:
+            card_key = ckey
+            rem = (rem[:cm.start()] + " " + rem[cm.end():]).strip()
+            break
+
+    # 識別分攤方式 (joint / alan / anne)
+    split_type = "joint"
+    split_patterns = [
+        (r"(an|anne|安|老婆|太太)\s*(個人|自己|自付|獨享)", "anne"),
+        (r"(al|alan|倫)\s*(個人|自己|自付|獨享)", "alan"),
+        (r"\b(個人|自己|自付)\b", "owner"),
+        (r"\b(共同|平分|公費|一起)\b", "joint"),
+    ]
+    for pat, stype in split_patterns:
+        sm = re.search(pat, rem, re.IGNORECASE)
+        if sm:
+            if stype == "owner":
+                owner = CARDS_INFO[card_key]["owner"]
+                split_type = "anne" if owner == "Anne" else "alan"
+            else:
+                split_type = stype
+            rem = (rem[:sm.start()] + " " + rem[sm.end():]).strip()
+            break
+
+    item_name = re.sub(r"\s+", " ", rem).strip() or "旅途消費"
+    base_twd, fee_twd, total_twd, payer = calc_twd_and_fee(orig_amount, currency, card_key)
+
+    return {
+        "date": datetime.datetime.now().strftime("%m/%d %H:%M"),
+        "item": item_name,
+        "orig_amount": orig_amount,
+        "currency": currency,
+        "base_twd": base_twd,
+        "fee_twd": fee_twd,
+        "total_twd": total_twd,
+        "card_key": card_key,
+        "payer": payer,
+        "split": split_type,
+    }
+
+
+def expense_action_keyboard(exp_id: int, cur_card: str, cur_split: str) -> dict:
+    def c_lbl(k, short):
+        return f"✅{short}" if cur_card == k else short
+
+    def s_lbl(k, short):
+        return f"✅{short}" if cur_split == k else short
+
+    return {
+        "inline_keyboard": [
+            [
+                {"text": c_lbl("Al_星展eco", "👨Al星展"), "callback_data": f"tcard:{exp_id}:Al_星展eco"},
+                {"text": c_lbl("Al_永豐幣倍", "👨Al永豐"), "callback_data": f"tcard:{exp_id}:Al_永豐幣倍"},
+                {"text": c_lbl("Al_星展傳說", "👨Al傳說"), "callback_data": f"tcard:{exp_id}:Al_星展傳說"},
+                {"text": c_lbl("Al_聯邦賴點", "👨Al賴點"), "callback_data": f"tcard:{exp_id}:Al_聯邦賴點"},
+            ],
+            [
+                {"text": c_lbl("An_星展eco", "👩An星展"), "callback_data": f"tcard:{exp_id}:An_星展eco"},
+                {"text": c_lbl("An_Chase", "👩Chase(0%)"), "callback_data": f"tcard:{exp_id}:An_Chase"},
+                {"text": c_lbl("Cash_Al", "💵Al現金"), "callback_data": f"tcard:{exp_id}:Cash_Al"},
+                {"text": c_lbl("Cash_An", "💵An現金"), "callback_data": f"tcard:{exp_id}:Cash_An"},
+            ],
+            [
+                {"text": s_lbl("joint", "💑共同平分"), "callback_data": f"tsplit:{exp_id}:joint"},
+                {"text": s_lbl("alan", "👨Alan個人"), "callback_data": f"tsplit:{exp_id}:alan"},
+                {"text": s_lbl("anne", "👩Anne個人"), "callback_data": f"tsplit:{exp_id}:anne"},
+                {"text": "🗑撤銷", "callback_data": f"tdel:{exp_id}"},
+            ],
+        ]
+    }
+
+
+def calc_trip_settlement(rows: list) -> dict:
+    alan_paid = 0
+    anne_paid = 0
+    alan_should = 0.0
+    anne_should = 0.0
+    joint_total = 0
+    alan_personal = 0
+    anne_personal = 0
+    card_used = {k: 0 for k in CARDS_INFO}
+
+    for r in rows:
+        tot = r["total_twd"]
+        base = r["base_twd"]
+        ck = r["card_key"]
+        if ck in card_used:
+            # 信用卡回饋上限以未含手續費之消費本金 base_twd 計算
+            card_used[ck] += base
+
+        if r["payer"] == "Alan":
+            alan_paid += tot
+        else:
+            anne_paid += tot
+
+        if r["split"] == "joint":
+            joint_total += tot
+            alan_should += tot / 2.0
+            anne_should += tot / 2.0
+        elif r["split"] == "alan":
+            alan_personal += tot
+            alan_should += tot
+        else:
+            anne_personal += tot
+            anne_should += tot
+
+    # 正數代表 Anne 需給 Alan，負數代表 Alan 需給 Anne
+    trip_anne_owes_alan = round(alan_paid - alan_should)
+    combined_anne_owes_alan = trip_anne_owes_alan + PRE_TRIP_ANNE_OWES_ALAN
+
+    return {
+        "count": len(rows),
+        "total_spend": alan_paid + anne_paid,
+        "joint_total": joint_total,
+        "alan_personal": alan_personal,
+        "anne_personal": anne_personal,
+        "alan_paid": alan_paid,
+        "anne_paid": anne_paid,
+        "alan_should": round(alan_should),
+        "anne_should": round(anne_should),
+        "trip_net": trip_anne_owes_alan,
+        "combined_net": combined_anne_owes_alan,
+        "card_used": card_used,
+    }
+
+
+def format_expense_receipt(exp: dict, rows: list) -> str:
+    stats = calc_trip_settlement(rows)
+    ck = exp["card_key"]
+    cinfo = CARDS_INFO.get(ck, CARDS_INFO["Al_星展eco"])
+    used = stats["card_used"].get(ck, 0)
+    limit = cinfo["limit"]
+
+    split_names = {"joint": "💑 共同平分", "alan": "👨 Alan 個人", "anne": "👩 Anne 個人"}
+    orig_str = f"{exp['orig_amount']:g} {exp['currency']}"
+    fee_str = f"（含 1.5% 手續費 <code>NT${exp['fee_twd']:,}</code>）" if exp["fee_twd"] > 0 else "（免手續費 ✨）"
+
+    lines = [
+        f"✅ <b>已記帳 #{exp['id']}：{html.escape(exp['item'])}</b>",
+        f"• <b>金額</b>：<code>{orig_str}</code> ➔ <b><code>{fmt_nt(exp['total_twd'])}</code></b> {fee_str}",
+        f"• <b>付款與歸屬</b>：{cinfo['label']} ｜ {split_names.get(exp['split'], '共同')}",
+    ]
+
+    if limit > 0:
+        rem = max(0, limit - used)
+        warn = " ⚠️ <b>快滿了！</b>" if rem < 2500 else ""
+        lines.append(
+            f"• <b>此卡額度 ({cinfo['desc']})</b>：已刷 <code>{fmt_nt(used)}</code> / <code>{fmt_nt(limit)}</code>（剩 <b><code>{fmt_nt(rem)}</code></b>）{warn}"
+        )
+
+    net = stats["trip_net"]
+    if net > 0:
+        settle_str = f"Anne 需給 Alan <code>{fmt_nt(net)}</code>"
+    elif net < 0:
+        settle_str = f"Alan 需給 Anne <code>{fmt_nt(abs(net))}</code>"
+    else:
+        settle_str = "雙方剛好兩清 NT$0"
+
+    lines.append(f"• <b>旅途現場代墊累計</b>：{settle_str}")
+    lines.append("\n💡 <i>點選下方按鈕可一鍵切換「刷哪張卡」或「共同/個人」：</i>")
+    return "\n".join(lines)
+
+
+def build_trip_summary_text() -> str:
+    rows = read_travel_expenses()
+    stats = calc_trip_settlement(rows)
+    rates = load_rates()
+
+    net = stats["trip_net"]
+    if net > 0:
+        trip_settle = f"👉 <b>Anne 需給 Alan <code>{fmt_nt(net)}</code></b>"
+    elif net < 0:
+        trip_settle = f"👉 <b>Alan 需給 Anne <code>{fmt_nt(abs(net))}</code></b>"
+    else:
+        trip_settle = "👉 <b>雙方兩清 NT$0</b>"
+
+    c_net = stats["combined_net"]
+    if c_net > 0:
+        comb_settle = f"Anne 需給 Alan <code>{fmt_nt(c_net)}</code>"
+    elif c_net < 0:
+        comb_settle = f"Alan 需給 Anne <code>{fmt_nt(abs(c_net))}</code>"
+    else:
+        comb_settle = "雙方兩清 NT$0"
+
+    lines = [
+        "✈️ <b>英國＋冰島旅途記帳＆分帳結算</b>",
+        f"💱 當前匯率：<code>GBP {rates['GBP']}</code>｜<code>ISK {rates['ISK']}</code>｜<code>USD {rates['USD']}</code>",
+        "",
+        "─── 💰 旅途現場花費統計 ───",
+        f"• <b>旅途現場總支出</b>：<code>{fmt_nt(stats['total_spend'])}</code>（共 {stats['count']} 筆）",
+        f"  ├ 💑 共同花費合計：<code>{fmt_nt(stats['joint_total'])}</code>（各半 <code>{fmt_nt(round(stats['joint_total']/2))}</code>）",
+        f"  ├ 👨 Alan 個人花費：<code>{fmt_nt(stats['alan_personal'])}</code>",
+        f"  └ 👩 Anne 個人花費：<code>{fmt_nt(stats['anne_personal'])}</code>",
+        "",
+        "─── ⚖️ 誰刷多少 ＆ 代墊結算 ───",
+        f"• 👨 Alan 現場實付：<code>{fmt_nt(stats['alan_paid'])}</code>（應負擔 <code>{fmt_nt(stats['alan_should'])}</code>）",
+        f"• 👩 Anne 現場實付：<code>{fmt_nt(stats['anne_paid'])}</code>（應負擔 <code>{fmt_nt(stats['anne_should'])}</code>）",
+        f"• <b>旅途現場結算</b>：{trip_settle}",
+        f"• <b>若加計行前未結 (+NT$36,488)</b>：{comb_settle}",
+        "",
+        "─── 📝 最近 10 筆旅途明細 ───",
+    ]
+
+    if not rows:
+        lines.append("<i>尚無旅途記帳紀錄！直接傳送如：</i>\n<code>龍蝦湯 4500isk Al星展</code>\n<code>風衣 85gbp An個人 Chase</code>\n<i>即可 5 秒記帳！</i>")
+    else:
+        s_icon = {"joint": "💑", "alan": "👨", "anne": "👩"}
+        for r in rows[-10:]:
+            c_short = CARDS_INFO.get(r["card_key"], {}).get("label", r["card_key"]).split()[-1]
+            lines.append(
+                f"• <code>#{r['id']}</code> {s_icon.get(r['split'], '💑')} <b>{html.escape(r['item'])}</b>｜"
+                f"<code>{r['orig_amount']:g}{r['currency']}</code> (<code>{fmt_nt(r['total_twd'])}</code>)｜{c_short}"
+            )
+
+    lines.append("\n💡 <i>直接打字「品項 金額幣別」即可記帳；輸入 <code>/del 編號</code> 可刪除指定筆數</i>")
+    return "\n".join(lines)
+
+
+def build_cards_radar_text() -> str:
+    rows = read_travel_expenses()
+    stats = calc_trip_settlement(rows)
+    used_map = stats["card_used"]
+
+    lines = [
+        "💳 <b>英冰旅途：信用卡高回饋額度雷達</b>",
+        "（自動累計旅途記帳本金，站在櫃檯前 1 秒決定掏哪張卡！）\n",
+        "─── 👨 <b>Alan 的神卡額度</b> ───",
+    ]
+
+    for ck in ("Al_星展eco", "Al_永豐幣倍", "Al_星展傳說", "Al_聯邦賴點"):
+        info = CARDS_INFO[ck]
+        used = used_map.get(ck, 0)
+        lim = info["limit"]
+        if lim > 0:
+            rem = max(0, lim - used)
+            bar = progress_bar(used, lim, 8)
+            lines.append(
+                f"• <b>{info['label']}</b>（{info['desc']}）\n"
+                f"  <code>{bar}</code> 已刷 <code>{fmt_nt(used)}</code> / 剩 <b><code>{fmt_nt(rem)}</code></b>"
+            )
+        else:
+            lines.append(f"• <b>{info['label']}</b>（{info['desc']}）：已刷 <code>{fmt_nt(used)}</code>（無上限）")
+
+    lines.append("\n─── 👩 <b>Anne 的神卡額度</b> ───")
+    for ck in ("An_星展eco", "An_Chase"):
+        info = CARDS_INFO[ck]
+        used = used_map.get(ck, 0)
+        lim = info["limit"]
+        if lim > 0:
+            rem = max(0, lim - used)
+            bar = progress_bar(used, lim, 8)
+            lines.append(
+                f"• <b>{info['label']}</b>（{info['desc']}）\n"
+                f"  <code>{bar}</code> 已刷 <code>{fmt_nt(used)}</code> / 剩 <b><code>{fmt_nt(rem)}</code></b>"
+            )
+        else:
+            lines.append(f"• <b>{info['label']}</b>（{info['desc']}）：已刷 <code>{fmt_nt(used)}</code>（免手續費無上限 ✨）")
+
+    lines.append(
+        "\n─── 💡 <b>旅途刷卡優先順序小抄</b> ───\n"
+        "1️⃣ <b>當地實體感應/插卡</b>：先刷滿雙方 <b>星展 eco (5%, 各 1.5萬)</b> ➔ 再刷 <b>Alan 永豐幣倍 (6%, 2萬)</b> ➔ <b>星展傳說 (5%, 1.25萬)</b>\n"
+        "2️⃣ <b>線上購票 / 餐廳 / 額度滿後</b>：刷 <b>Anne Chase 美國卡</b>（免 1.5% 海外手續費、餐廳 3x）"
+    )
+    return "\n".join(lines)
+
+
+# ─── 原有家庭資產查詢邏輯 ───
 
 def read_data():
     with open(SUMMARY_CSV, encoding="utf-8") as f:
@@ -341,7 +845,6 @@ def build_flows_text(period_idx: int = -1) -> tuple:
     else:
         lines.append("  • 無")
 
-    # 建立期間切換按鈕
     btn_rows = []
     row = []
     for idx, (p1, p2) in enumerate(pairs):
@@ -379,7 +882,6 @@ def build_stats_text() -> str:
     max_per = max(summary, key=lambda r: r["after_joint"])
     min_per = min(summary, key=lambda r: r["after_joint"])
 
-    # 各類別與集中度
     cur_bals = [b for b in balances if b["date"] == cur["date"]]
     cur_bals.sort(key=lambda x: x["amount"], reverse=True)
     top3_sum = sum(b["amount"] for b in cur_bals[:3])
@@ -425,7 +927,6 @@ def build_account_selector_keyboard() -> dict:
             seen.add(a)
             accts.append(a)
 
-    # 依最新餘額排序，過濾掉永遠為 0 的帳戶
     latest_date = max(b["date"] for b in balances)
     latest_map = {b["account"]: b["amount"] for b in balances if b["date"] == latest_date}
     ever_nonzero = {b["account"] for b in balances if b["amount"] > 0}
@@ -567,6 +1068,8 @@ def main():
     try:
         tg_api(token, "setMyCommands", {
             "commands": [
+                {"command": "trip", "description": "✈️ 英冰旅途記帳＆分帳結算總覽"},
+                {"command": "cards", "description": "💳 信用卡高回饋額度雷達（剩餘額度進度條）"},
                 {"command": "summary", "description": "📊 最新家庭資產與共同基金總覽"},
                 {"command": "joint", "description": "💑 共同基金深度分析（壓力測試＋達標倒數）"},
                 {"command": "accounts", "description": "🏦 各銀行與證券帳戶最新餘額"},
@@ -574,15 +1077,13 @@ def main():
                 {"command": "stats", "description": "📐 財務健康度、累計成長率與極值"},
                 {"command": "acct", "description": "🔍 查詢單一帳戶歷月水位變化"},
                 {"command": "ledger", "description": "📒 共同基金收支帳本（夢想撲滿近期紀錄）"},
-                {"command": "history", "description": "📈 歷月共同基金與資產成長趨勢"},
                 {"command": "sync", "description": "🔄 從 Google 試算表同步最新資料並更新網站"},
-                {"command": "web", "description": "🌐 開啟 GitHub Pages 視覺化圖表儀表板"},
             ]
         })
     except Exception as e:
         print(f"Warning: setMyCommands failed: {e}", file=sys.stderr)
 
-    print("🤖 家庭資產 Telegram Bot (@ALANANNE_FAMILY_bot) 已啟動（進階指標版）！", flush=True)
+    print("🤖 家庭資產 ＆ 英冰旅途快記 Bot (@ALANANNE_FAMILY_bot) 已啟動！", flush=True)
     offset = 0
 
     while True:
@@ -605,6 +1106,7 @@ def main():
                         pass
                     if allowed_users and user_id not in allowed_users:
                         continue
+
                     if data_str.startswith("flow:"):
                         idx = int(data_str.split(":", 1)[1])
                         txt, kb = build_flows_text(idx)
@@ -613,6 +1115,41 @@ def main():
                         acct_name = data_str.split(":", 1)[1]
                         txt = build_single_account_text(acct_name)
                         edit_msg(token, chat_id, msg_id, txt, build_account_selector_keyboard())
+                    elif data_str.startswith("tcard:") or data_str.startswith("tsplit:"):
+                        parts = data_str.split(":")
+                        action, exp_id, new_val = parts[0], int(parts[1]), parts[2]
+                        rows = read_travel_expenses()
+                        target = None
+                        for r in rows:
+                            if r["id"] == exp_id:
+                                if action == "tcard":
+                                    r["card_key"] = new_val
+                                    b_twd, f_twd, tot_twd, payer = calc_twd_and_fee(r["orig_amount"], r["currency"], new_val)
+                                    r["base_twd"] = b_twd
+                                    r["fee_twd"] = f_twd
+                                    r["total_twd"] = tot_twd
+                                    r["payer"] = payer
+                                else:
+                                    r["split"] = new_val
+                                target = r
+                                break
+                        if target:
+                            write_travel_expenses(rows)
+                            txt = format_expense_receipt(target, rows)
+                            kb = expense_action_keyboard(target["id"], target["card_key"], target["split"])
+                            edit_msg(token, chat_id, msg_id, txt, kb)
+                    elif data_str.startswith("tdel:"):
+                        exp_id = int(data_str.split(":", 1)[1])
+                        rows = read_travel_expenses()
+                        deleted = next((r for r in rows if r["id"] == exp_id), None)
+                        if deleted:
+                            rows = [r for r in rows if r["id"] != exp_id]
+                            write_travel_expenses(rows)
+                            edit_msg(
+                                token,
+                                chat_id,
+                                f"🗑 已撤銷第 <code>#{exp_id}</code> 筆旅途記帳（{html.escape(deleted['item'])} {deleted['orig_amount']:g}{deleted['currency']}）",
+                            )
                     continue
 
                 msg = upd.get("message") or upd.get("edited_message")
@@ -624,17 +1161,17 @@ def main():
                 if not text:
                     continue
 
-                # 權限檢查：若尚未在白名單，輸入通關密碼即可永久解鎖
+                # 權限檢查
                 if allowed_users and user_id not in allowed_users:
                     if text in valid_passcodes:
                         save_authorized_user(user_id, allowed_users)
                         send_msg(
                             token,
                             chat_id,
-                            "🎉 <b>驗證成功！歡迎使用家庭資產小幫手</b>\n下方按鈕可隨時查詢最新共同基金與各項進階指標：",
+                            "🎉 <b>驗證成功！歡迎使用家庭資產＆旅途快記小幫手</b>\n下方按鈕可隨時查詢，或直接打字如 <code>龍蝦湯 4500isk Al星展</code> 5 秒記帳：",
                             main_keyboard(),
                         )
-                        send_msg(token, chat_id, build_summary_text(), inline_web_button())
+                        send_msg(token, chat_id, build_trip_summary_text(), inline_web_button())
                     else:
                         send_msg(
                             token,
@@ -643,8 +1180,41 @@ def main():
                         )
                     continue
 
+                # 1. 刪除旅途記帳指令 (/del 3)
+                if text.startswith("/del "):
+                    arg = text.split(" ", 1)[1].strip().lstrip("#")
+                    if arg.isdigit():
+                        exp_id = int(arg)
+                        rows = read_travel_expenses()
+                        deleted = next((r for r in rows if r["id"] == exp_id), None)
+                        if deleted:
+                            rows = [r for r in rows if r["id"] != exp_id]
+                            write_travel_expenses(rows)
+                            send_msg(token, chat_id, f"🗑 已刪除 <code>#{exp_id}</code>：{html.escape(deleted['item'])}（{fmt_nt(deleted['total_twd'])}）", main_keyboard())
+                        else:
+                            send_msg(token, chat_id, f"找不到編號 #{exp_id} 的旅途記帳紀錄。", main_keyboard())
+                        continue
+
+                # 2. 調整匯率指令 (/rate gbp 43.5)
+                if text.startswith("/rate "):
+                    parts = text.split()
+                    if len(parts) == 3:
+                        try:
+                            cur_c = parts[1].upper()
+                            val = float(parts[2])
+                            save_rate(cur_c, val)
+                            send_msg(token, chat_id, f"✅ 已更新 <b>{cur_c}</b> 匯率為 <code>{val}</code>", main_keyboard())
+                        except Exception:
+                            send_msg(token, chat_id, "格式範例：<code>/rate gbp 43.5</code> 或 <code>/rate isk 0.2632</code>", main_keyboard())
+                        continue
+
+                # 3. 選單與固定指令
                 if text in ("/start", "/summary", "📊 資產總覽"):
                     send_msg(token, chat_id, build_summary_text(), main_keyboard())
+                elif text in ("/trip", "✈️ 旅途記帳＆結算"):
+                    send_msg(token, chat_id, build_trip_summary_text(), main_keyboard())
+                elif text in ("/cards", "💳 刷卡額度雷達"):
+                    send_msg(token, chat_id, build_cards_radar_text(), main_keyboard())
                 elif text in ("/joint", "💑 共同基金分析"):
                     send_msg(token, chat_id, build_joint_analysis_text(), main_keyboard())
                 elif text in ("/accounts", "🏦 帳戶明細"):
@@ -693,22 +1263,29 @@ def main():
                     except Exception as e:
                         send_msg(token, chat_id, f"❌ 同步發生錯誤：<code>{html.escape(str(e))}</code>", main_keyboard())
                 else:
-                    send_msg(
-                        token,
-                        chat_id,
-                        "請點選下方 10 宮格選單或使用指令：\n"
-                        "• <code>/summary</code> 資產總覽\n"
-                        "• <code>/joint</code> 共同基金深度分析\n"
-                        "• <code>/accounts</code> 帳戶明細\n"
-                        "• <code>/flows</code> 期間資金流向\n"
-                        "• <code>/stats</code> 財務健康指標\n"
-                        "• <code>/acct</code> 單一帳戶查詢\n"
-                        "• <code>/ledger</code> 共同基金帳本\n"
-                        "• <code>/history</code> 歷月趨勢\n"
-                        "• <code>/sync</code> 同步試算表\n"
-                        "• <code>/web</code> 線上儀表板",
-                        main_keyboard(),
-                    )
+                    # 4. 嘗試解析為「一句話旅途快記」
+                    parsed = parse_quick_expense(text)
+                    if parsed:
+                        rows = read_travel_expenses()
+                        next_id = (max(r["id"] for r in rows) + 1) if rows else 1
+                        parsed["id"] = next_id
+                        rows.append(parsed)
+                        write_travel_expenses(rows)
+                        receipt_txt = format_expense_receipt(parsed, rows)
+                        kb = expense_action_keyboard(next_id, parsed["card_key"], parsed["split"])
+                        send_msg(token, chat_id, receipt_txt, kb)
+                    else:
+                        send_msg(
+                            token,
+                            chat_id,
+                            "✈️ <b>旅途 5 秒快記怎麼打？</b>\n"
+                            "直接傳送「<b>品項 金額幣別 [誰的卡] [個人]</b>」，例如：\n"
+                            "• <code>龍蝦湯 4500isk Al星展</code>（預設共同平分＋自動算1.5%手續費）\n"
+                            "• <code>風衣 85gbp An個人 Chase</code>（Anne個人＋Chase免手續費）\n"
+                            "• <code>熱狗 750isk</code>（只打金額也能記！跳出按鈕讓你點選哪張卡）\n\n"
+                            "或點選下方快捷鍵查詢：",
+                            main_keyboard(),
+                        )
         except KeyboardInterrupt:
             break
         except Exception as e:
