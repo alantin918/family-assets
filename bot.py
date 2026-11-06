@@ -352,6 +352,32 @@ def calc_twd_and_fee(orig_amount: float, currency: str, card_key: str) -> tuple:
     return base_twd, fee_twd, base_twd + fee_twd, card["owner"]
 
 
+HELP_TEXT = (
+    "❓ <b>使用說明</b>\n\n"
+    "✈️ <b>旅途記帳（5 秒快記）</b>\n"
+    "直接打：<b>品項 金額幣別 [誰的卡] [個人]</b>\n"
+    "• <code>龍蝦湯 4500isk Al星展</code>（預設兩人平分）\n"
+    "• <code>風衣 85gbp An個人 Chase</code>（Anne 個人）\n"
+    "• <code>熱狗 750isk</code>（沒寫卡 → 跳出按鈕選）\n"
+    "• <code>咖啡 £4.5</code>\n"
+    "💱 幣別：<code>isk／kr／克朗</code>・<code>gbp／£／英鎊</code>・<code>usd／$</code>・<code>eur／€</code>・<code>台幣</code>\n"
+    "💳 卡片：<code>Chase</code>・<code>An星展</code>・<code>Al星展</code>・<code>永豐／幣倍／大戶</code>・<code>聯邦</code>・<code>傳說</code>・<code>台新／玉山／國泰</code>・<code>現金</code>（<code>An現金</code>）\n"
+    "👥 分攤：預設<b>共同平分</b>；<code>個人</code>＝刷卡的人自己付；也可寫 <code>An個人</code>／<code>Al個人</code>\n"
+    "📸 <b>拍照記帳</b>：直接傳收據或刷卡截圖（可加文字說明卡片／個人）\n\n"
+    "🧾 <b>記帳管理</b>\n"
+    "• /trip 旅途總覽＋分帳結算\n"
+    "• <code>/del 3</code> 刪除第 3 筆\n"
+    "• /cards 信用卡回饋額度雷達\n"
+    "• <code>/rate gbp 43.5</code> 調整匯率\n"
+    "• <code>/tz uk</code>／<code>/tz tw</code> 切換記帳時間（英冰／台灣）\n"
+    "• /clear 清空旅途記帳（會再確認一次）\n\n"
+    "📊 <b>家庭資產</b>\n"
+    "/summary 總覽・/joint 共同基金・/accounts 帳戶・/flows 資金流向・/stats 健康度・/acct 單一帳戶・/ledger 共同基金帳本・/history 歷月趨勢\n\n"
+    "🔧 <b>其他</b>\n"
+    "/sync 同步試算表・/web 線上儀表板・/menu 叫出按鈕・/help 這份說明"
+)
+
+
 def parse_quick_expense(text: str) -> dict:
     """
     解析自然語言記帳：
@@ -1254,6 +1280,7 @@ def main():
     try:
         tg_api(token, "setMyCommands", {
             "commands": [
+                {"command": "help", "description": "❓ 有哪些功能＋記帳怎麼打"},
                 {"command": "menu", "description": "🎛️ 喚起底部功能按鈕選單"},
                 {"command": "trip", "description": "✈️ 英冰旅途記帳＆分帳結算總覽"},
                 {"command": "cards", "description": "💳 信用卡高回饋額度雷達（剩餘額度進度條）"},
@@ -1525,7 +1552,9 @@ def main():
                     continue
 
                 # 3. 選單與固定指令
-                if text in ("/menu", "選單", "按鈕"):
+                if text in ("/help", "help", "說明", "幫助", "怎麼用", "功能"):
+                    send_msg(token, chat_id, HELP_TEXT, main_keyboard())
+                elif text in ("/menu", "選單", "按鈕"):
                     send_msg(token, chat_id, "🎛️ <b>已為你展開底部功能選單！</b>（點擊任一按鈕後會自動收起隱藏）", main_keyboard())
                 elif text in ("/start", "/summary", "📊 資產總覽"):
                     send_msg(token, chat_id, build_summary_text(), main_keyboard())
