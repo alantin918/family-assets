@@ -1,0 +1,14 @@
+.env
+.DS_Store
+__pycache__/
+*.pyc
+*.log
+summary.csv
+balances.csv
+ledger.csv
+travel_expenses.csv
+travel_expenses.bak.csv
+travel_config.json
+receipts/
+.bot.pid
+.authorized_users.json

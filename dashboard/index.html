@@ -1,0 +1,431 @@
+<meta name="dash-one-writer">
+<style>
+  .fx { display: flex; flex-direction: column; gap: var(--cds-gap-xl); font-family: var(--font-anthropic-sans); }
+  .fx-head h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; text-wrap: balance; }
+  .fx-take { color: var(--color-fg-muted); font-size: var(--cds-font-size-body); line-height: 1.7; margin: var(--cds-gap-sm) 0 0; max-width: 62em; }
+  .fx .fx-take b { color: var(--color-fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .fx-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--cds-gap-md); }
+  .fx-tile { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-md) var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-xs); min-width: 0; }
+  .fx-lab { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .fx-big { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); font-variant-numeric: tabular-nums; }
+  .fx-sub { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); font-variant-numeric: tabular-nums; }
+  .fx-up { color: var(--color-ok); }
+  .fx-down { color: var(--color-bad); }
+  .fx-sec { display: flex; flex-direction: column; gap: var(--cds-gap-md); }
+  .fx-sec > h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; }
+  .fx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: var(--cds-gap-md); }
+  .fx-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: flex; flex-direction: column; gap: var(--cds-gap-sm); min-width: 0; }
+  .fx-card h3 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; }
+  .fx-note { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); margin: 0; line-height: 1.6; }
+  .fx-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-md); font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+  .fx-legend span { display: inline-flex; align-items: center; gap: var(--cds-gap-xs); }
+  .fx-sw { display: inline-block; width: 0.625rem; height: 0.625rem; border-radius: 2px; flex: none; }
+  .fx-chart { position: relative; min-height: 260px; }
+  .fx-flow { position: relative; min-height: 120px; }
+  .fx-tip { position: absolute; z-index: 2; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; white-space: nowrap; display: flex; flex-direction: column; gap: 2px; }
+  .fx-tip div { display: flex; align-items: center; gap: var(--cds-gap-xs); }
+  .fx-tip .fx-tip-h { color: var(--cds-text-secondary); }
+  .fx-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cds-gap-sm); }
+  .fx-row select { font: inherit; font-size: var(--cds-font-size-caption); padding: 2px 6px; border-radius: var(--cds-radius); border: 1px solid var(--color-border-line); background: var(--color-bg); color: var(--color-fg); }
+  .fx-scroll { overflow-x: auto; min-height: 120px; }
+  .fx-heat, .fx-tbl { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
+  .fx-heat th, .fx-heat td, .fx-tbl th, .fx-tbl td { padding: 6px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--color-border-line); }
+  .fx-heat th:first-child, .fx-heat td:first-child, .fx-tbl th:first-child, .fx-tbl td:first-child, .fx-tbl td:nth-child(2), .fx-tbl th:nth-child(2) { text-align: left; }
+  .fx-heat th, .fx-tbl th { color: var(--color-fg-muted); font-weight: 400; }
+  [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+  [data-dash-source-state=empty] { color: transparent; }
+</style>
+
+<div class="fx">
+  <header class="fx-head">
+    <h1>家庭資產資金流</h1>
+    <p class="fx-take">截至 <b data-draw="k-date" data-source="latest" data-field="date">—</b>，總資產 <b data-draw="k-total" data-source="latest" data-field="total">—</b>，其中共同基金 <b data-draw="k-joint" data-source="latest" data-field="joint">—</b>（占 <b data-draw="k-jshare" data-source="latest" data-field="joint_share">—</b>），Alan 可用 <b data-draw="k-personal" data-source="latest" data-field="personal">—</b>。<span class="fx-s-stock">銀行與電子支付的現金只有 <b data-draw="k-cash" data-source="latest" data-field="cash">—</b>，比共同基金少，代表共同基金約有 <b data-draw="k-instock" data-source="latest" data-field="joint_in_stock">—</b> 實際放在股票裡，股價波動會直接影響共同基金。</span><span class="fx-s-cash" hidden>銀行與電子支付的現金足以涵蓋整筆共同基金。</span></p>
+  </header>
+
+  <section class="fx-tiles" aria-label="最新數字">
+    <div class="fx-tile">
+      <span class="fx-lab">總資產</span>
+      <span class="fx-big" data-draw="t-total" data-source="latest" data-field="total">—</span>
+      <span class="fx-sub" data-draw="t-dtotal" data-source="latest" data-field="d_total">—</span>
+    </div>
+    <div class="fx-tile">
+      <span class="fx-lab">共同基金</span>
+      <span class="fx-big" data-draw="t-joint" data-source="latest" data-field="joint">—</span>
+      <span class="fx-sub" data-draw="t-djoint" data-source="latest" data-field="d_joint">—</span>
+    </div>
+    <div class="fx-tile">
+      <span class="fx-lab">Alan 可用（扣除共同基金後）</span>
+      <span class="fx-big" data-draw="t-personal" data-source="latest" data-field="personal">—</span>
+      <span class="fx-sub" data-draw="t-dpersonal" data-source="latest" data-field="d_personal">—</span>
+    </div>
+    <div class="fx-tile">
+      <span class="fx-lab">股票占總資產（含在途款項）</span>
+      <span class="fx-big" data-draw="t-sshare" data-source="latest" data-field="stock_share">—</span>
+      <span class="fx-sub">股票市值 <span data-draw="t-stock" data-source="latest" data-field="stock">—</span></span>
+    </div>
+    <div class="fx-tile">
+      <span class="fx-lab">共同基金放在股票的部分</span>
+      <span class="fx-big" data-draw="t-instock" data-source="latest" data-field="joint_in_stock">—</span>
+      <span class="fx-sub">現金部位 <span data-draw="t-cash" data-source="latest" data-field="cash">—</span></span>
+    </div>
+  </section>
+
+  <section class="fx-sec" id="trend">
+    <h2>每月怎麼變化</h2>
+    <div class="fx-grid">
+      <div class="fx-card" id="split-card">
+        <h3>共同基金與個人</h3>
+        <p class="fx-note">每次快照的總資產，拆成共同基金和Alan 可用兩塊。共同基金 = 總共 − 扣除共同基金後。</p>
+        <div class="fx-legend"><span><i class="fx-sw" data-c="0"></i>共同基金</span><span><i class="fx-sw" data-c="1"></i>Alan 可用</span></div>
+        <div class="fx-chart" data-draw="splitbars" data-source="split"></div>
+      </div>
+      <div class="fx-card" id="cat-card">
+        <h3>錢放在哪裡</h3>
+        <p class="fx-note">同一筆總資產，依存放的地方分類。6 月到 8 月之間，中信和永豐的存款大量轉進股票。</p>
+        <div class="fx-legend"><span><i class="fx-sw" data-c="2"></i>銀行存款</span><span><i class="fx-sw" data-c="3"></i>股票（含在途）</span><span><i class="fx-sw" data-c="4"></i>電子支付</span></div>
+        <div class="fx-chart" data-draw="catbars" data-source="bycat"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="fx-sec" id="flows">
+    <h2>資金流向</h2>
+    <div class="fx-card" id="flow-card">
+      <div class="fx-row">
+        <h3>單一期間各帳戶的增減</h3>
+        <select id="fx-period" data-draw="period" data-source="flows" aria-label="選擇期間"></select>
+      </div>
+      <p class="fx-note">向右是流入、向左是流出。同一期間裡，一邊減少、一邊增加，通常就是帳戶之間的轉帳。7 月沒有快照，所以 6/9 → 8/5 是兩個月的變化。</p>
+      <div class="fx-flow" data-draw="flowbars" data-source="flows"></div>
+    </div>
+    <div class="fx-card" id="heat-card">
+      <h3>所有期間一覽</h3>
+      <p class="fx-note">每一格是該帳戶相對上一次快照的增減，顏色越深金額越大。只列出曾經變動過的帳戶。</p>
+      <div class="fx-scroll" data-draw="flowgrid" data-source="flows"></div>
+    </div>
+  </section>
+
+  <section class="fx-sec" id="accounts">
+    <h2>各帳戶最新餘額</h2>
+    <div class="fx-card">
+      <p class="fx-note">最新一次快照，和前一次比較。餘額為 0 且沒有變動的帳戶不列出。</p>
+      <div class="fx-scroll">
+        <table class="fx-tbl" data-source="accounts" data-row-key="account">
+          <thead><tr><th data-field="account">帳戶</th><th data-field="category">類別</th><th data-field="balance">餘額</th><th data-field="change">較上期</th><th data-field="share">占比</th></tr></thead>
+          <tbody data-draw="acctrows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <p class="fx-note">資料來自你貼上的每月資產表。空白格視為 0。總共與「扣除共同基金後」兩欄直接取自原表，共同基金由兩者相減得出。</p>
+</div>
+
+<script>
+  window.fxNT = (v) => 'NT$' + d3.format(',')(Math.round(v));
+  window.fxSigned = (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + 'NT$' + d3.format(',')(Math.abs(Math.round(v)));
+  window.fxWan = (v) => {
+    const a = Math.abs(v);
+    if (a < 1e4) return d3.format(',')(Math.round(v));
+    return (v / 1e4).toFixed(1).replace(/\.0$/, '') + '萬';
+  };
+  window.fxMD = (d) => +d.slice(5, 7) + '/' + +d.slice(8, 10);
+  window.fxPeriodLabel = (p) => p.split('→').map(fxMD).join(' → ');
+  window.fxTip = (el) => {
+    const t = document.createElement('div');
+    t.className = 'fx-tip';
+    t.hidden = true;
+    el.appendChild(t);
+    return {
+      show(ev, head, lines) {
+        const h = document.createElement('div');
+        h.className = 'fx-tip-h';
+        h.textContent = head;
+        t.replaceChildren(h, ...lines.map(([c, txt]) => {
+          const r = document.createElement('div');
+          if (c) { const s = document.createElement('i'); s.className = 'fx-sw'; s.style.background = c; r.appendChild(s); }
+          r.appendChild(document.createTextNode(txt));
+          return r;
+        }));
+        t.hidden = false;
+        const b = el.getBoundingClientRect();
+        let x = ev.clientX - b.left + 12, y = ev.clientY - b.top + 12;
+        if (x + t.offsetWidth > b.width) x = ev.clientX - b.left - t.offsetWidth - 12;
+        if (y + t.offsetHeight > b.height) y = Math.max(0, ev.clientY - b.top - t.offsetHeight - 12);
+        t.style.left = Math.max(0, x) + 'px';
+        t.style.top = y + 'px';
+      },
+      hide() { t.hidden = true; },
+    };
+  };
+  const capStyle = (sel) => sel.style('font-size', 'var(--cds-font-size-caption)').style('fill', 'var(--color-fg-muted)').style('font-family', 'var(--font-anthropic-sans)');
+  window.fxCap = capStyle;
+
+  // 共用的堆疊長條圖
+  window.fxStack = (el, rows, series) => {
+    el.replaceChildren();
+    const W = Math.max(280, el.clientWidth), H = 260, mt = 22, mb = 26, mr = 8;
+    const max = d3.max(rows, (r) => d3.sum(series, (s) => r[s.key])) || 1;
+    const y = d3.scaleLinear([0, max * 1.08], [H - mb, mt]).nice();
+    const svg = d3.select(el).append('svg').attr('width', '100%').attr('height', H).attr('viewBox', `0 0 ${W} ${H}`);
+    const ticks = y.ticks(5);
+    const tl = capStyle(svg.append('g').selectAll('text').data(ticks).join('text').text(fxWan)).attr('text-anchor', 'end').attr('dy', '0.32em');
+    const ml = d3.max(tl.nodes(), (n) => n.getComputedTextLength()) + 10;
+    tl.attr('x', ml - 8).attr('y', (d) => y(d));
+    svg.insert('g', ':first-child').selectAll('line').data(ticks).join('line')
+      .attr('x1', ml).attr('x2', W - mr).attr('y1', (d) => y(d)).attr('y2', (d) => y(d))
+      .style('stroke', (d) => d === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)').attr('stroke-width', 1);
+    const x = d3.scaleBand(rows.map((r) => r.date), [ml, W - mr]).padding(0.3);
+    const bw = Math.min(32, x.bandwidth()), off = (x.bandwidth() - bw) / 2;
+    rows.forEach((r) => {
+      let acc = 0;
+      series.forEach((s) => {
+        const v = r[s.key];
+        svg.append('rect').attr('x', x(r.date) + off).attr('width', bw)
+          .attr('y', y(acc + v)).attr('height', Math.max(0, y(acc) - y(acc + v)))
+          .style('fill', s.color);
+        acc += v;
+      });
+      capStyle(svg.append('text')).style('fill', 'var(--color-fg)').attr('text-anchor', 'middle')
+        .attr('x', x(r.date) + x.bandwidth() / 2).attr('y', y(acc) - 6).text(fxWan(acc));
+    });
+    capStyle(svg.append('g').selectAll('text').data(rows).join('text')).attr('text-anchor', 'middle')
+      .attr('x', (r) => x(r.date) + x.bandwidth() / 2).attr('y', H - 8).text((r) => fxMD(r.date));
+    const tip = fxTip(el);
+    svg.append('g').selectAll('rect').data(rows).join('rect')
+      .attr('x', (r) => x(r.date)).attr('width', x.bandwidth()).attr('y', mt).attr('height', H - mb - mt)
+      .style('fill', 'transparent')
+      .on('pointermove', (ev, r) => tip.show(ev, r.date.replaceAll('-', '/'), [
+        ...series.slice().reverse().map((s) => [s.color, `${s.label}　${fxNT(r[s.key])}`]),
+        [null, `合計　${fxNT(d3.sum(series, (s) => r[s.key]))}`],
+      ]))
+      .on('pointerleave', () => tip.hide());
+  };
+</script>
+
+<script>
+  dash.calc('split', {
+    inputs: ['summary'],
+    title: '共同基金與個人拆分',
+    description: '共同基金 = 總共 − 扣除共同基金後；Alan 可用 = 扣除共同基金後。',
+    fn: (summary) => summary.map((r) => ({ date: r.date, total: Number(r.total), joint: Number(r.total) - Number(r.after_joint), personal: Number(r.after_joint) })),
+  });
+
+  dash.calc('bycat', {
+    inputs: ['balances'],
+    title: '依存放類別加總',
+    description: '每次快照把各帳戶依類別（銀行存款、證券、電子支付）加總。',
+    fn: (balances) => {
+      const m = {};
+      for (const r of balances) {
+        const o = m[r.date] = m[r.date] || { date: r.date, bank: 0, stock: 0, epay: 0 };
+        const k = r.category === '證券' ? 'stock' : r.category === '電子支付' ? 'epay' : 'bank';
+        o[k] += Number(r.amount);
+      }
+      return Object.values(m).sort((a, b) => (a.date < b.date ? -1 : 1));
+    },
+  });
+
+  dash.calc('flows', {
+    inputs: ['balances'],
+    title: '各帳戶每期增減',
+    description: '每個帳戶本次快照餘額減去上一次快照餘額。',
+    fn: (balances) => {
+      const dates = [...new Set(balances.map((r) => r.date))].sort();
+      const v = {};
+      for (const r of balances) (v[r.account] = v[r.account] || { cat: r.category })[r.date] = Number(r.amount);
+      const out = [];
+      for (let i = 1; i < dates.length; i++) {
+        for (const a of Object.keys(v)) {
+          out.push({ period: dates[i - 1] + '→' + dates[i], account: a, category: v[a].cat, delta: (v[a][dates[i]] || 0) - (v[a][dates[i - 1]] || 0) });
+        }
+      }
+      return out;
+    },
+  });
+
+  dash.calc('latest', {
+    inputs: ['split', 'bycat'],
+    title: '最新一次快照',
+    description: '最新快照的總額、共同基金、Alan 可用與前一次的差額，以及現金與股票部位。',
+    fn: (split, bycat) => {
+      const a = split[split.length - 1], p = split[split.length - 2];
+      const c = bycat.find((r) => r.date === a.date);
+      const cash = c.bank + c.epay;
+      return [{
+        date: a.date, prev: p.date, total: a.total, joint: a.joint, personal: a.personal,
+        d_total: a.total - p.total, d_joint: a.joint - p.joint, d_personal: a.personal - p.personal,
+        stock: c.stock, stock_share: c.stock / a.total, joint_share: a.joint / a.total,
+        cash: cash, joint_in_stock: Math.max(0, a.joint - cash),
+      }];
+    },
+  });
+
+  dash.calc('accounts', {
+    inputs: ['balances'],
+    title: '各帳戶最新餘額',
+    description: '最新快照各帳戶餘額、與前一次的差額、占總額比例。',
+    fn: (balances) => {
+      const dates = [...new Set(balances.map((r) => r.date))].sort();
+      const L = dates[dates.length - 1], P = dates[dates.length - 2];
+      const m = {};
+      for (const r of balances) {
+        const o = m[r.account] = m[r.account] || { account: r.account, category: r.category, balance: 0, prev: 0 };
+        if (r.date === L) o.balance = Number(r.amount);
+        if (r.date === P) o.prev = Number(r.amount);
+      }
+      const tot = Object.values(m).reduce((s, o) => s + o.balance, 0);
+      return Object.values(m)
+        .map((o) => ({ account: o.account, category: o.category, balance: o.balance, change: o.balance - o.prev, share: tot ? o.balance / tot : 0 }))
+        .sort((a, b) => b.balance - a.balance);
+    },
+  });
+</script>
+
+<script>
+  document.querySelectorAll('.fx-sw[data-c]').forEach((s) => { s.style.background = dash.colors[+s.dataset.c]; });
+
+  dash.onData(() => {
+    const d = dash.data('latest');
+    const v = d.status === 'ok' && d.data[0] ? d.data[0].joint_in_stock : 0;
+    document.querySelectorAll('.fx-s-stock').forEach((e) => { e.hidden = !(v > 0); });
+    document.querySelectorAll('.fx-s-cash').forEach((e) => { e.hidden = !(d.status === 'ok' && v <= 0); });
+  });
+
+  const pct = d3.format('.1%');
+  const fields = {
+    'k-date': ['date', fxMD], 'k-total': ['total', fxNT], 'k-joint': ['joint', fxNT], 'k-jshare': ['joint_share', pct],
+    'k-personal': ['personal', fxNT], 'k-cash': ['cash', fxNT], 'k-instock': ['joint_in_stock', fxNT],
+    't-total': ['total', fxNT], 't-joint': ['joint', fxNT], 't-personal': ['personal', fxNT],
+    't-sshare': ['stock_share', pct], 't-stock': ['stock', fxNT], 't-instock': ['joint_in_stock', fxNT], 't-cash': ['cash', fxNT],
+  };
+  for (const [name, [f, fmt]] of Object.entries(fields)) {
+    dash.draw(name, (el) => {
+      const d = dash.data('latest');
+      el.textContent = d.status === 'ok' && d.data[0] ? fmt(d.data[0][f]) : '—';
+    });
+  }
+  for (const [name, f] of [['t-dtotal', 'd_total'], ['t-djoint', 'd_joint'], ['t-dpersonal', 'd_personal']]) {
+    dash.draw(name, (el) => {
+      const d = dash.data('latest');
+      const r = d.status === 'ok' ? d.data[0] : null;
+      el.classList.toggle('fx-up', !!r && r[f] > 0);
+      el.classList.toggle('fx-down', !!r && r[f] < 0);
+      el.textContent = r ? `${fxSigned(r[f])}（較 ${fxMD(r.prev)}）` : '—';
+    });
+  }
+
+  dash.draw('splitbars', (el) => {
+    const d = dash.data('split');
+    if (d.status !== 'ok' || !d.data.length) { el.replaceChildren(); return; }
+    fxStack(el, d.data, [
+      { key: 'joint', label: '共同基金', color: dash.colors[0] },
+      { key: 'personal', label: 'Alan 可用', color: dash.colors[1] },
+    ]);
+  });
+
+  dash.draw('catbars', (el) => {
+    const d = dash.data('bycat');
+    if (d.status !== 'ok' || !d.data.length) { el.replaceChildren(); return; }
+    fxStack(el, d.data, [
+      { key: 'bank', label: '銀行存款', color: dash.colors[2] },
+      { key: 'stock', label: '股票（含在途）', color: dash.colors[3] },
+      { key: 'epay', label: '電子支付', color: dash.colors[4] },
+    ]);
+  });
+</script>
+
+<script>
+  const periodsOf = (rows) => [...new Set(rows.map((r) => r.period))];
+
+  dash.draw('period', (sel) => {
+    const d = dash.data('flows');
+    const ps = d.status === 'ok' ? periodsOf(d.data) : [];
+    sel.replaceChildren(...ps.map((p) => new Option(fxPeriodLabel(p), p)));
+    if (!ps.includes(window.fxPeriod)) window.fxPeriod = ps[ps.length - 1];
+    sel.value = window.fxPeriod || '';
+    sel.onchange = () => { window.fxPeriod = sel.value; dash.draw('flowbars'); };
+  });
+
+  dash.draw('flowbars', (el) => {
+    el.replaceChildren();
+    const d = dash.data('flows');
+    if (d.status !== 'ok') return;
+    const ps = periodsOf(d.data);
+    const p = ps.includes(window.fxPeriod) ? window.fxPeriod : ps[ps.length - 1];
+    const rows = d.data.filter((r) => r.period === p && r.delta !== 0).sort((a, b) => b.delta - a.delta);
+    if (!rows.length) return;
+    const W = Math.max(280, el.clientWidth), rh = 30, H = rows.length * rh + 8;
+    const svg = d3.select(el).append('svg').attr('width', '100%').attr('height', H).attr('viewBox', `0 0 ${W} ${H}`);
+    const names = fxCap(svg.append('g').selectAll('text').data(rows).join('text').text((r) => r.account))
+      .style('fill', 'var(--color-fg)').attr('text-anchor', 'end').attr('dy', '0.32em');
+    const lw = d3.max(names.nodes(), (n) => n.getComputedTextLength()) + 12;
+    names.attr('x', lw - 8).attr('y', (r, i) => i * rh + rh / 2);
+    const m = d3.max(rows, (r) => Math.abs(r.delta));
+    const pad = 64;
+    const x = d3.scaleLinear([-m, m], [lw + pad, W - pad]);
+    svg.append('line').attr('x1', x(0)).attr('x2', x(0)).attr('y1', 0).attr('y2', H)
+      .style('stroke', 'var(--cds-chart-reference)').attr('stroke-width', 1);
+    const inC = dash.colors[0], outC = dash.colors[5];
+    const tip = fxTip(el);
+    rows.forEach((r, i) => {
+      const yy = i * rh + (rh - 16) / 2;
+      svg.append('rect').attr('x', x(Math.min(0, r.delta))).attr('width', Math.max(1, Math.abs(x(r.delta) - x(0))))
+        .attr('y', yy).attr('height', 16).attr('rx', 2).style('fill', r.delta > 0 ? inC : outC)
+        .on('pointermove', (ev) => tip.show(ev, fxPeriodLabel(p), [[r.delta > 0 ? inC : outC, `${r.account}（${r.category}）　${fxSigned(r.delta)}`]]))
+        .on('pointerleave', () => tip.hide());
+      fxCap(svg.append('text')).style('fill', 'var(--color-fg)')
+        .attr('x', r.delta > 0 ? x(r.delta) + 4 : x(r.delta) - 4).attr('text-anchor', r.delta > 0 ? 'start' : 'end')
+        .attr('y', yy + 8).attr('dy', '0.32em').text((r.delta > 0 ? '+' : '−') + fxWan(Math.abs(r.delta)));
+    });
+  });
+
+  dash.draw('flowgrid', (el) => {
+    el.replaceChildren();
+    const d = dash.data('flows');
+    if (d.status !== 'ok') return;
+    const ps = periodsOf(d.data);
+    const accts = [...new Set(d.data.map((r) => r.account))].filter((a) => d.data.some((r) => r.account === a && r.delta !== 0));
+    const max = d3.max(d.data, (r) => Math.abs(r.delta)) || 1;
+    const t = document.createElement('table');
+    t.className = 'fx-heat';
+    const hr = t.createTHead().insertRow();
+    const th0 = document.createElement('th'); th0.textContent = '帳戶'; hr.appendChild(th0);
+    ps.forEach((p) => { const th = document.createElement('th'); th.textContent = fxPeriodLabel(p); hr.appendChild(th); });
+    const tb = t.createTBody();
+    accts.forEach((a) => {
+      const tr = tb.insertRow();
+      tr.insertCell().textContent = a;
+      ps.forEach((p) => {
+        const r = d.data.find((x) => x.account === a && x.period === p);
+        const td = tr.insertCell();
+        const v = r ? r.delta : 0;
+        td.textContent = v === 0 ? '·' : (v > 0 ? '+' : '−') + fxWan(Math.abs(v));
+        if (v !== 0) {
+          const k = Math.round(10 + 55 * Math.sqrt(Math.abs(v) / max));
+          td.style.background = `color-mix(in srgb, ${v > 0 ? dash.colors[0] : dash.colors[5]} ${k}%, transparent)`;
+        } else td.style.color = 'var(--color-fg-muted)';
+      });
+    });
+    el.appendChild(t);
+  });
+
+  dash.draw('acctrows', (tb) => {
+    tb.replaceChildren();
+    const d = dash.data('accounts');
+    if (d.status !== 'ok') return;
+    const pct = d3.format('.1%');
+    for (const r of d.data) {
+      if (!r.balance && !r.change) continue;
+      const tr = tb.insertRow();
+      tr.insertCell().textContent = r.account;
+      tr.insertCell().textContent = r.category;
+      tr.insertCell().textContent = fxNT(r.balance);
+      const c = tr.insertCell();
+      c.textContent = r.change === 0 ? '—' : fxSigned(r.change);
+      if (r.change > 0) c.className = 'fx-up';
+      if (r.change < 0) c.className = 'fx-down';
+      tr.insertCell().textContent = pct(r.share);
+    }
+  });
+</script>
