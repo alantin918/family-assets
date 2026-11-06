@@ -12,3 +12,4 @@ travel_config.json
 receipts/
 .bot.pid
 .authorized_users.json
+.bot_mode

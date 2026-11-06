@@ -79,8 +79,15 @@ CARDS_INFO = {
     "Al_永豐幣倍": {
         "owner": "Alan",
         "label": "👨 Al永豐幣倍",
-        "desc": "國外實體 6%",
+        "desc": "國外實體 6%・每期 20,000（11/18 換期）",
         "limit": 20000,
+        "fee_rate": 0.015,
+    },
+    "Al_永豐大戶": {
+        "owner": "Alan",
+        "label": "👨 Al永豐大戶",
+        "desc": "海外 4.5%（Hopp／地鐵／線上）・每期 16,000（11/18 換期）",
+        "limit": 16000,
         "fee_rate": 0.015,
     },
     "Al_星展傳說": {
@@ -248,10 +255,38 @@ def tg_api(token: str, method: str, payload: dict = None, timeout: int = 35) -> 
         return json.loads(resp.read().decode("utf-8"))
 
 
+MODE_FILE = BASE_DIR / ".bot_mode"
+
+
+def get_mode() -> str:
+    try:
+        return MODE_FILE.read_text(encoding="utf-8").strip() or "travel"
+    except Exception:
+        return "travel"
+
+
+def set_mode(mode: str):
+    try:
+        MODE_FILE.write_text(mode, encoding="utf-8")
+    except Exception:
+        pass
+
+
 def main_keyboard() -> dict:
+    # ✈️ 旅途模式（預設）／📊 資產模式，狀態存在 .bot_mode
+    if get_mode() != "assets":
+        return {
+            "keyboard": [
+                [{"text": "✈️ 旅途記帳＆結算"}, {"text": "💳 刷卡額度雷達"}],
+                [{"text": "🗑 刪除最後一筆"}, {"text": "❓ 使用說明"}],
+                [{"text": "🕒 時區切換"}, {"text": "📊 家庭資產"}],
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": True,
+        }
     return {
         "keyboard": [
-            [{"text": "✈️ 旅途記帳＆結算"}, {"text": "💳 刷卡額度雷達"}],
+            [{"text": "✈️ 回旅途模式"}, {"text": "❓ 使用說明"}],
             [{"text": "📊 資產總覽"}, {"text": "💑 共同基金分析"}],
             [{"text": "🏦 帳戶明細"}, {"text": "💸 本期資金流向"}],
             [{"text": "📐 財務健康指標"}, {"text": "🔍 單一帳戶查詢"}],
@@ -361,11 +396,12 @@ HELP_TEXT = (
     "• <code>熱狗 750isk</code>（沒寫卡 → 跳出按鈕選）\n"
     "• <code>咖啡 £4.5</code>\n"
     "💱 幣別：<code>isk／kr／克朗</code>・<code>gbp／£／英鎊</code>・<code>usd／$</code>・<code>eur／€</code>・<code>台幣</code>\n"
-    "💳 卡片：<code>Chase</code>・<code>An星展</code>・<code>Al星展</code>・<code>永豐／幣倍／大戶</code>・<code>聯邦</code>・<code>傳說</code>・<code>台新／玉山／國泰</code>・<code>現金</code>（<code>An現金</code>）\n"
+    "💳 卡片：<code>Chase</code>・<code>An星展</code>・<code>Al星展</code>・<code>幣倍</code>・<code>大戶</code>・<code>聯邦</code>・<code>傳說</code>・<code>台新／玉山／國泰</code>・<code>現金</code>（<code>An現金</code>）\n"
     "👥 分攤：預設<b>共同平分</b>；<code>個人</code>＝刷卡的人自己付；也可寫 <code>An個人</code>／<code>Al個人</code>\n"
     "📸 <b>拍照記帳</b>：直接傳收據或刷卡截圖（可加文字說明卡片／個人）\n\n"
     "🧾 <b>記帳管理</b>\n"
     "• /trip 旅途總覽＋分帳結算\n"
+    "• /undo 刪除最後一筆（會先確認）\n"
     "• <code>/del 3</code> 刪除第 3 筆\n"
     "• /cards 信用卡回饋額度雷達\n"
     "• <code>/rate gbp 43.5</code> 調整匯率\n"
@@ -374,7 +410,8 @@ HELP_TEXT = (
     "📊 <b>家庭資產</b>\n"
     "/summary 總覽・/joint 共同基金・/accounts 帳戶・/flows 資金流向・/stats 健康度・/acct 單一帳戶・/ledger 共同基金帳本・/history 歷月趨勢\n\n"
     "🔧 <b>其他</b>\n"
-    "/sync 同步試算表・/web 線上儀表板・/menu 叫出按鈕・/help 這份說明"
+    "/sync 同步試算表・/web 線上儀表板・/menu 叫出按鈕・/help 這份說明\n"
+    "🔀 底部按鈕：預設 ✈️ 旅途模式；點「📊 家庭資產」切到資產，「✈️ 回旅途模式」切回"
 )
 
 
@@ -439,7 +476,8 @@ def parse_quick_expense(text: str) -> dict:
         (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
         (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
         (r"(al|alan|倫)?\s*現金", "Cash_Al"),
-        (r"(al|alan|倫)?\s*(永豐|幣倍|大戶|dawho)", "Al_永豐幣倍"),
+        (r"(al|alan|倫)?\s*(大戶|dawho)", "Al_永豐大戶"),
+        (r"(al|alan|倫)?\s*(永豐|幣倍)", "Al_永豐幣倍"),
         (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
         (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
         (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
@@ -496,7 +534,8 @@ def extract_card_and_split(hint_text: str) -> tuple:
         (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
         (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
         (r"(al|alan|倫)?\s*現金", "Cash_Al"),
-        (r"(al|alan|倫)?\s*(永豐|幣倍|大戶|dawho)", "Al_永豐幣倍"),
+        (r"(al|alan|倫)?\s*(大戶|dawho)", "Al_永豐大戶"),
+        (r"(al|alan|倫)?\s*(永豐|幣倍)", "Al_永豐幣倍"),
         (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
         (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
         (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
@@ -629,7 +668,7 @@ def expense_action_keyboard(exp_id: int, cur_card: str, cur_split: str) -> dict:
             [
                 {"text": c_lbl("Al_星展eco", "👨Al星展"), "callback_data": f"tcard:{exp_id}:Al_星展eco"},
                 {"text": c_lbl("Al_永豐幣倍", "👨Al永豐"), "callback_data": f"tcard:{exp_id}:Al_永豐幣倍"},
-                {"text": c_lbl("Al_星展傳說", "👨Al傳說"), "callback_data": f"tcard:{exp_id}:Al_星展傳說"},
+                {"text": c_lbl("Al_永豐大戶", "👨Al大戶"), "callback_data": f"tcard:{exp_id}:Al_永豐大戶"},
                 {"text": c_lbl("Al_聯邦賴點", "👨Al賴點"), "callback_data": f"tcard:{exp_id}:Al_聯邦賴點"},
             ],
             [
@@ -820,7 +859,7 @@ def build_cards_radar_text() -> str:
         "─── 👨 <b>Alan 的神卡額度</b> ───",
     ]
 
-    for ck in ("Al_星展eco", "Al_永豐幣倍", "Al_星展傳說", "Al_聯邦賴點"):
+    for ck in ("Al_永豐幣倍", "Al_永豐大戶", "Al_星展eco", "Al_聯邦賴點"):
         info = CARDS_INFO[ck]
         used = used_map.get(ck, 0)
         lim = info["limit"]
@@ -1281,6 +1320,9 @@ def main():
         tg_api(token, "setMyCommands", {
             "commands": [
                 {"command": "help", "description": "❓ 有哪些功能＋記帳怎麼打"},
+                {"command": "undo", "description": "🗑 刪除最後一筆記帳（會先確認）"},
+                {"command": "travel", "description": "✈️ 切到旅途記帳模式"},
+                {"command": "assets", "description": "📊 切到家庭資產模式"},
                 {"command": "menu", "description": "🎛️ 喚起底部功能按鈕選單"},
                 {"command": "trip", "description": "✈️ 英冰旅途記帳＆分帳結算總覽"},
                 {"command": "cards", "description": "💳 信用卡高回饋額度雷達（剩餘額度進度條）"},
@@ -1552,8 +1594,28 @@ def main():
                     continue
 
                 # 3. 選單與固定指令
-                if text in ("/help", "help", "說明", "幫助", "怎麼用", "功能"):
+                if text in ("/help", "help", "說明", "幫助", "怎麼用", "功能", "❓ 使用說明"):
                     send_msg(token, chat_id, HELP_TEXT, main_keyboard())
+                elif text in ("📊 家庭資產", "/assets"):
+                    set_mode("assets")
+                    send_msg(token, chat_id, "📊 <b>已切換到家庭資產模式</b>\n要回到記帳，點「✈️ 回旅途模式」。", main_keyboard())
+                elif text in ("✈️ 回旅途模式", "/travel"):
+                    set_mode("travel")
+                    send_msg(token, chat_id, "✈️ <b>已切回旅途記帳模式</b>\n直接打「品項 金額幣別」就能記一筆，例如 <code>熱狗 750isk</code>。", main_keyboard())
+                elif text in ("🗑 刪除最後一筆", "/undo"):
+                    rows = read_travel_expenses()
+                    if not rows:
+                        send_msg(token, chat_id, "目前沒有旅途記帳紀錄。", main_keyboard())
+                    else:
+                        last = max(rows, key=lambda r: r["id"])
+                        send_msg(
+                            token,
+                            chat_id,
+                            f"最後一筆是 <code>#{last['id']}</code>：{html.escape(str(last['item']))}（{fmt_nt(last['total_twd'])}）\n確定要刪除嗎？",
+                            {"inline_keyboard": [[{"text": f"🗑 確定刪除 #{last['id']}", "callback_data": f"tdel:{last['id']}"}]]},
+                        )
+                elif text == "🕒 時區切換":
+                    send_msg(token, chat_id, f"🕒 目前紀錄時間為：<code>{get_now_str()}</code>\n• 切換英冰當地時間：<code>/tz uk</code>\n• 切換台灣時間：<code>/tz tw</code>", main_keyboard())
                 elif text in ("/menu", "選單", "按鈕"):
                     send_msg(token, chat_id, "🎛️ <b>已為你展開底部功能選單！</b>（點擊任一按鈕後會自動收起隱藏）", main_keyboard())
                 elif text in ("/start", "/summary", "📊 資產總覽"):
