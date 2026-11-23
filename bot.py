@@ -596,7 +596,7 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
     b64_img = base64.b64encode(img_bytes).decode("ascii")
     prompt = (
         "請辨識這張收據、台灣電子發票、統一發票、明細或刷卡通知截圖，並只回傳純 JSON 格式（不要加 markdown 區塊）：\n"
-        '{"item": "繁體中文店家或品項簡稱(例如：全聯採買、家樂福、星巴克、加油、香味饌麵食館)", "amount": 數字總額, "currency": "TWD或JPY或USD或EUR或GBP或ISK", "date": "收據上的消費日期時間 YYYY-MM-DD HH:MM（只有日期就 YYYY-MM-DD，看不到就空字串）"}\n'
+        '{"item": "繁體中文店家或品項簡稱(例如：全聯採買、家樂福、星巴克、加油、香味饌麵食館)", "amount": 數字總額, "currency": "TWD或JPY或USD或EUR或GBP或ISK", "date": "收據上的消費日期時間（多半是 2026 年；英國收據日期為 日/月/年） YYYY-MM-DD HH:MM（只有日期就 YYYY-MM-DD，看不到就空字串）"}\n'
         "注意：台灣發票請抓「總計／合計／應付」金額，不要抓發票號碼、統一編號、隨機碼、載具或找零；"
         "店名優先用賣方名稱。沒有標示幣別且像台灣收據時一律為 TWD；看到 ¥/円 為 JPY、£ 為 GBP、kr 為 ISK。"
     )
@@ -642,6 +642,11 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
     rec_date = str(parsed_json.get("date") or "").strip()
     if not re.fullmatch(r"20\d\d-\d\d-\d\d( \d\d:\d\d)?", rec_date):
         rec_date = get_now_str()
+    else:
+        # 收據常印兩位數年份（11/11/26 易被讀成 2023），年份不對就改成今年
+        this_year = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)).year
+        if int(rec_date[:4]) not in (this_year, this_year - 1):
+            rec_date = f"{this_year}{rec_date[4:]}"
     ai_item = str(parsed_json.get("item") or "拍照收據").strip()
     item_name = f"{extra_note} ({ai_item})" if extra_note else f"📸 {ai_item}"
 
