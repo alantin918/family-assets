@@ -13,3 +13,4 @@ receipts/
 .bot.pid
 .authorized_users.json
 .bot_mode
+recon_cache.json

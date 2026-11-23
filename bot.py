@@ -430,6 +430,8 @@ HELP_TEXT = (
     "💳 付款：👩 <code>An星展</code>・<code>An現金</code>｜👨 <code>大戶</code>・<code>幣倍</code>・<code>Al現金</code>（沒寫＝Al大戶；現金自動分英鎊／克朗）\n"
     "👥 分攤：預設<b>共同平分</b>；<code>個人</code>＝刷卡的人自己付；也可寫 <code>An個人</code>／<code>Al個人</code>\n"
     "📸 <b>拍照記帳</b>：直接傳收據或刷卡截圖（可加文字說明卡片／個人）\n\n"
+    "📑 <b>信用卡帳單對帳</b>：傳帳單 PDF，或截圖說明寫 <code>帳單 大戶</code>／<code>帳單 An星展</code>，"
+    "也可貼上「帳單」開頭的明細文字 → 列出對上／漏記／帳單沒有，並可一鍵改成實際台幣或補記\n\n"
     "🧾 <b>記帳管理</b>\n"
     "• /trip 旅途總覽＋分帳結算\n"
     "• /undo 刪除最後一筆（會先確認）\n"
@@ -916,6 +918,239 @@ def build_cards_radar_text() -> str:
         "💵 現金免手續費；照片說明寫「An現金」「Al現金」會依幣別自動分英鎊／克朗"
     )
     return "\n".join(lines)
+
+
+# ─── 信用卡帳單對帳 ───
+
+RECON_CACHE = BASE_DIR / "recon_cache.json"
+
+STATEMENT_PROMPT = (
+    "這是一份信用卡帳單（PDF、App 截圖或複製的文字）。請列出每一筆消費明細，只回傳純 JSON（不要 markdown）：\n"
+    '{"card_name": "銀行與卡名(例如 永豐大戶、永豐幣倍、星展eco)", "txns": ['
+    '{"date": "消費日 YYYY-MM-DD", "merchant": "商店名稱(保留原文)", "amount": 外幣原始金額數字或null, '
+    '"currency": "GBP/ISK/EUR/USD/JPY/TWD", "twd": 入帳台幣金額數字, "fee_twd": 該筆國外交易服務費數字或null}]}\n'
+    "規則：1) 「國外交易服務費／海外手續費」不要當成獨立一筆，請併入它所屬那筆消費的 fee_twd；帳單沒列手續費就填 null。"
+    "2) 繳款、自動扣繳、回饋折抵、利息等不是消費的列不要列。退款用負數。"
+    "3) 年份多半是 2026；只有月/日就補 2026。4) 只有台幣金額的國內消費 currency 填 TWD、amount 填 null。"
+)
+
+
+def tg_download(token: str, file_id: str) -> bytes:
+    f_info = tg_api(token, "getFile", {"file_id": file_id})
+    dl_url = f"https://api.telegram.org/file/bot{token}/{f_info['result']['file_path']}"
+    with urllib.request.urlopen(dl_url, timeout=40) as resp:
+        return resp.read()
+
+
+def gemini_extract_statement(gemini_key: str, data: bytes = b"", mime: str = "", text: str = "") -> dict:
+    parts = [{"text": STATEMENT_PROMPT}]
+    if data:
+        parts.append({"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode("ascii")}})
+    if text:
+        parts.append({"text": "帳單文字：\n" + text})
+    payload = {"contents": [{"parts": parts}], "generationConfig": {"responseMimeType": "application/json"}}
+    last_err = None
+    for model_name in VISION_MODELS:
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+            raw = res["candidates"][0]["content"]["parts"][0]["text"].strip()
+            raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
+            out = json.loads(raw)
+            out["_model"] = model_name
+            return out
+        except Exception as e:
+            last_err = e
+            print(f"[帳單 fallback] {model_name} failed: {e}", flush=True)
+    raise RuntimeError(f"所有模型皆失敗: {last_err}")
+
+
+def _to_float(v):
+    try:
+        return float(str(v).replace(",", "")) if v not in (None, "") else None
+    except Exception:
+        return None
+
+
+def _row_date(s: str):
+    m = re.search(r"(20\d\d)-(\d\d)-(\d\d)", s or "")
+    if m:
+        return datetime.date(int(m[1]), int(m[2]), int(m[3]))
+    m = re.search(r"(\d{1,2})/(\d{1,2})", s or "")
+    if m:
+        return datetime.date(2026, int(m[1]), int(m[2]))
+    return None
+
+
+def card_from_text(s: str):
+    for pat, ckey in CARD_PATTERNS:
+        if re.search(pat, s or "", re.IGNORECASE):
+            return ckey
+    return None
+
+
+def reconcile_statement(stmt: dict, rows: list, card_key, include_twd: bool) -> dict:
+    txns, skipped_twd, skipped_neg = [], 0, 0
+    for t in stmt.get("txns") or []:
+        twd = _to_float(t.get("twd"))
+        amt = _to_float(t.get("amount"))
+        cur = str(t.get("currency") or "TWD").upper()
+        if cur not in DEFAULT_RATES:
+            cur = "TWD"
+        if (twd or amt or 0) <= 0:
+            skipped_neg += 1
+            continue
+        if cur == "TWD" and not include_twd:
+            skipped_twd += 1
+            continue
+        txns.append({
+            "date": str(t.get("date") or "")[:10],
+            "merchant": str(t.get("merchant") or "（未知商店）").strip()[:40],
+            "amount": amt, "currency": cur,
+            "twd": round(twd) if twd else None,
+            "fee_twd": round(_to_float(t.get("fee_twd"))) if _to_float(t.get("fee_twd")) is not None else None,
+        })
+
+    used = set()
+
+    def ok(t, r):
+        if t["currency"] != "TWD" and t["amount"]:
+            if r["currency"] != t["currency"] or abs(r["orig_amount"] - t["amount"]) > max(0.01 * t["amount"], 0.5):
+                return None
+        elif t["twd"]:
+            if abs(r["base_twd"] - t["twd"]) > max(0.03 * t["twd"], 5):
+                return None
+        else:
+            return None
+        td, rd = _row_date(t["date"]), _row_date(r["date"])
+        dd = abs((td - rd).days) if td and rd else 2
+        return dd if dd <= 4 else None
+
+    matched, missing = [], []
+    for t in txns:
+        best = None
+        for same_card_only in (True, False):
+            for r in rows:
+                if r["id"] in used or r["card_key"].startswith("Cash"):
+                    continue
+                if same_card_only and card_key and r["card_key"] != card_key:
+                    continue
+                d = ok(t, r)
+                if d is not None and (best is None or d < best[0]):
+                    best = (d, r)
+            if best:
+                break
+        if best:
+            used.add(best[1]["id"])
+            matched.append({"txn": t, "row_id": best[1]["id"], "card_diff": bool(card_key and best[1]["card_key"] != card_key)})
+        else:
+            missing.append(t)
+
+    dates = [d for d in (_row_date(t["date"]) for t in txns) if d]
+    lo, hi = (min(dates), max(dates)) if dates else (None, None)
+    ledger_only = []
+    for r in rows:
+        if r["id"] in used or r["card_key"].startswith("Cash"):
+            continue
+        if card_key and r["card_key"] != card_key:
+            continue
+        rd = _row_date(r["date"])
+        if lo and rd and (rd < lo - datetime.timedelta(days=3) or rd > hi + datetime.timedelta(days=3)):
+            continue
+        ledger_only.append(r["id"])
+    return {"card_key": card_key, "matched": matched, "missing": missing, "ledger_only": ledger_only,
+            "skipped_twd": skipped_twd, "skipped_neg": skipped_neg, "total": len(txns)}
+
+
+def format_recon(res: dict, rows: list) -> tuple:
+    by_id = {r["id"]: r for r in rows}
+    ck = res["card_key"]
+    title = CARDS_INFO[ck]["label"] if ck in CARDS_INFO else "（未指定卡片，全部比對）"
+    L = [f"📑 <b>信用卡帳單對帳：{html.escape(title)}</b>",
+         f"帳單海外消費 {res['total']} 筆｜✅ 對上 {len(res['matched'])}｜❓ 漏記 {len(res['missing'])}｜📝 帳單沒有 {len(res['ledger_only'])}"]
+    if res["skipped_twd"]:
+        L.append(f"<i>（略過 {res['skipped_twd']} 筆台幣國內消費；要一起比對請在說明加「全部」）</i>")
+
+    diff_sum = 0
+    if res["matched"]:
+        L.append("\n✅ <b>對上的（記帳估算 → 帳單實際）</b>")
+        for m in res["matched"][:20]:
+            r, t = by_id[m["row_id"]], m["txn"]
+            real = (t["twd"] or r["base_twd"]) + (t["fee_twd"] if t["fee_twd"] is not None else r["fee_twd"])
+            d = real - r["total_twd"]
+            diff_sum += d
+            flag = "　⚠️卡別不同" if m["card_diff"] else ""
+            L.append(f"• <code>#{r['id']}</code> {html.escape(r['item'])}｜<code>{r['orig_amount']:g}{r['currency']}</code>｜"
+                     f"{fmt_nt(r['total_twd'])} → <b>{fmt_nt(real)}</b>（{fmt_signed(d)}）{flag}")
+        L.append(f"　小計差額：<b>{fmt_signed(diff_sum)}</b>")
+    if res["missing"]:
+        L.append("\n❓ <b>帳單有、記帳沒有</b>")
+        for t in res["missing"][:20]:
+            a = f"{t['amount']:g}{t['currency']}" if t["amount"] else ""
+            L.append(f"• {t['date'][5:]} {html.escape(t['merchant'])}｜<code>{a}</code> {fmt_nt(t['twd'] or 0)}")
+    if res["ledger_only"]:
+        L.append("\n📝 <b>記帳有、這份帳單沒有</b>（可能還沒入帳、刷別張卡或其實付現）")
+        for rid in res["ledger_only"][:20]:
+            r = by_id[rid]
+            L.append(f"• <code>#{rid}</code> {r['date'][:10]} {html.escape(r['item'])}｜<code>{r['orig_amount']:g}{r['currency']}</code>｜{CARDS_INFO.get(r['card_key'], {}).get('label', r['card_key'])}")
+    if not (res["matched"] or res["missing"] or res["ledger_only"]):
+        L.append("\n<i>這份帳單沒有可以比對的海外消費。</i>")
+
+    btns = []
+    if res["matched"]:
+        btns.append([{"text": f"🔄 對上的 {len(res['matched'])} 筆改成帳單實際台幣", "callback_data": "recon:apply"}])
+    if res["missing"]:
+        btns.append([{"text": f"➕ 漏記的 {len(res['missing'])} 筆補進帳本（共同平分）", "callback_data": "recon:add"}])
+    return "\n".join(L), ({"inline_keyboard": btns} if btns else None)
+
+
+def apply_recon(action: str) -> str:
+    if not RECON_CACHE.exists():
+        return "找不到上一次對帳結果，請重新上傳帳單。"
+    res = json.loads(RECON_CACHE.read_text(encoding="utf-8"))
+    rows = read_travel_expenses()
+    by_id = {r["id"]: r for r in rows}
+    n = 0
+    if action == "apply":
+        if res.get("applied"):
+            return "這份帳單的實際金額已經套用過了。"
+        for m in res["matched"]:
+            r, t = by_id.get(m["row_id"]), m["txn"]
+            if not r:
+                continue
+            if t["twd"]:
+                r["base_twd"] = int(t["twd"])
+            if t["fee_twd"] is not None:
+                r["fee_twd"] = int(t["fee_twd"])
+            r["total_twd"] = r["base_twd"] + r["fee_twd"]
+            n += 1
+        res["applied"] = True
+        msg = f"🔄 已把 {n} 筆改成帳單實際台幣金額。"
+    else:
+        if res.get("added"):
+            return "漏記的已經補過了。"
+        ck = res.get("card_key") or DEFAULT_CARD
+        next_id = (max(by_id) + 1) if by_id else 1
+        for t in res["missing"]:
+            cur = t["currency"]
+            amt = t["amount"] or t["twd"] or 0
+            if t["twd"]:
+                base = int(t["twd"])
+                fee = int(t["fee_twd"]) if t["fee_twd"] is not None else (0 if cur == "TWD" else round(base * CARDS_INFO[ck]["fee_rate"]))
+            else:
+                base, fee, _, _ = calc_twd_and_fee(amt, cur, ck)
+            rows.append({"id": next_id, "date": t["date"], "item": f"🧾 {t['merchant']}", "orig_amount": float(amt),
+                         "currency": cur if t["amount"] else "TWD", "base_twd": base, "fee_twd": fee,
+                         "total_twd": base + fee, "card_key": ck, "payer": CARDS_INFO[ck]["owner"], "split": "joint"})
+            next_id += 1
+            n += 1
+        res["added"] = True
+        msg = f"➕ 已補記 {n} 筆（預設共同平分；要改個人可用 /del 編號 後重記）。"
+    write_travel_expenses(rows)
+    RECON_CACHE.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+    return msg
 
 
 # ─── 原有家庭資產查詢邏輯 ───
@@ -1474,6 +1709,10 @@ def main():
                                 f"🗑 第 <code>#{exp_id}</code> 筆旅途記帳已撤銷",
                             )
                             toast_text = "此筆已撤銷"
+                    elif data_str in ("recon:apply", "recon:add"):
+                        out = apply_recon(data_str.split(":")[1])
+                        send_msg(token, chat_id, out + "\n\n" + build_trip_summary_text())
+                        toast_text = "完成"
                     elif data_str == "tclear:ask":
                         rows = read_travel_expenses()
                         edit_msg(
@@ -1514,9 +1753,10 @@ def main():
                 user_id = msg.get("from", {}).get("id", 0)
                 text = (msg.get("text") or "").strip()
                 photos = msg.get("photo") or []
+                document = msg.get("document") or {}
                 caption = (msg.get("caption") or "").strip()
 
-                if not text and not photos:
+                if not text and not photos and not document:
                     continue
 
                 # 權限檢查
@@ -1536,6 +1776,38 @@ def main():
                             chat_id,
                             "🔐 請先輸入家庭資產<b>通關密碼</b>以啟用查詢權限（只需驗證這一次）：",
                         )
+                    continue
+
+                # 00. 信用卡帳單對帳（PDF／截圖說明寫「帳單」／貼上「帳單」開頭文字）
+                doc_mime = document.get("mime_type", "")
+                is_stmt_doc = doc_mime == "application/pdf" or (doc_mime.startswith("image/") and re.match(r"^(帳單|對帳)", caption))
+                is_stmt_photo = bool(photos) and bool(re.match(r"^(帳單|對帳)", caption))
+                is_stmt_text = bool(re.match(r"^(帳單|對帳)", text)) and "\n" in text
+                if is_stmt_doc or is_stmt_photo or is_stmt_text:
+                    gemini_key = env.get("GEMINI_API_KEY", "").strip()
+                    hint = caption or text.split("\n", 1)[0]
+                    send_msg(token, chat_id, "📑 <i>收到帳單，正在讀取明細並跟帳本比對（約 10–40 秒）...</i>")
+                    try:
+                        if is_stmt_text:
+                            stmt = gemini_extract_statement(gemini_key, text=text.split("\n", 1)[1])
+                        elif is_stmt_doc:
+                            data = tg_download(token, document["file_id"])
+                            if doc_mime == "application/pdf" and b"/Encrypt" in data[:200000]:
+                                send_msg(token, chat_id, "🔒 這份 PDF 有密碼保護，我打不開。\n請用預覽程式「輸出成 PDF」存一份無密碼的，或直接傳帳單截圖（說明寫「帳單 大戶」）。", main_keyboard())
+                                continue
+                            stmt = gemini_extract_statement(gemini_key, data=data, mime=doc_mime)
+                        else:
+                            stmt = gemini_extract_statement(gemini_key, data=tg_download(token, photos[-1]["file_id"]), mime="image/jpeg")
+                        ck = card_from_text(re.sub(r"^(帳單|對帳)", "", hint)) or card_from_text(stmt.get("card_name", ""))
+                        if ck and ck.startswith("Cash"):
+                            ck = None
+                        rows = read_travel_expenses()
+                        res = reconcile_statement(stmt, rows, ck, "全部" in hint)
+                        RECON_CACHE.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+                        txt, kb = format_recon(res, rows)
+                        send_msg(token, chat_id, txt + f"\n🤖 <code>{html.escape(stmt.get('_model', ''))}</code>", kb)
+                    except Exception as e:
+                        send_msg(token, chat_id, f"❌ 帳單讀取失敗（<code>{html.escape(str(e)[:300])}</code>）", main_keyboard())
                     continue
 
                 # 0. 拍照記帳（收到收據或刷卡截圖照片）
