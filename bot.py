@@ -585,9 +585,10 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
 
     b64_img = base64.b64encode(img_bytes).decode("ascii")
     prompt = (
-        "請辨識這張旅遊收據、發票、菜單或刷卡通知截圖，並只回傳純 JSON 格式（不要加 markdown 區塊）：\n"
-        '{"item": "繁體中文店家或品項簡稱(例如：Bónus超市採買、龍蝦湯、倫敦地鐵)", "amount": 數字總額, "currency": "ISK或GBP或USD或EUR或JPY或TWD"}\n'
-        "注意：若看到 kr / ISK 為冰島克朗 ISK；看到 £ / GBP 為英鎊 GBP；看到 NT$ / TWD 為 TWD。請抓最終總計金額 (Total)。"
+        "請辨識這張收據、台灣電子發票、統一發票、明細或刷卡通知截圖，並只回傳純 JSON 格式（不要加 markdown 區塊）：\n"
+        '{"item": "繁體中文店家或品項簡稱(例如：全聯採買、家樂福、星巴克、加油、香味饌麵食館)", "amount": 數字總額, "currency": "TWD或JPY或USD或EUR或GBP或ISK"}\n'
+        "注意：台灣發票請抓「總計／合計／應付」金額，不要抓發票號碼、統一編號、隨機碼、載具或找零；"
+        "店名優先用賣方名稱。沒有標示幣別且像台灣收據時一律為 TWD；看到 ¥/円 為 JPY、£ 為 GBP、kr 為 ISK。"
     )
 
     payload = {
@@ -622,9 +623,9 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
         raise RuntimeError(f"所有視覺模型皆失敗: {last_err}")
 
     orig_amount = float(parsed_json.get("amount") or 0)
-    currency = str(parsed_json.get("currency") or "GBP").upper()
+    currency = str(parsed_json.get("currency") or "TWD").upper()
     if currency not in DEFAULT_RATES:
-        currency = "GBP"
+        currency = "TWD"
 
     card_key, split_type, extra_note = extract_card_and_split(caption)
     ai_item = str(parsed_json.get("item") or "拍照收據").strip()
@@ -1523,7 +1524,7 @@ def main():
                         send_msg(token, chat_id, "❌ .env 尚未設定 GEMINI_API_KEY，無法辨識照片。", main_keyboard())
                         continue
                     best_photo = photos[-1]
-                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 Gemini 3 Flash 極速辨識品項與外幣金額...</i>")
+                    send_msg(token, chat_id, "📸 <i>收到收據照片！正在用 Gemini 辨識店家與金額...</i>")
                     try:
                         parsed = ocr_receipt_photo(token, gemini_key, best_photo["file_id"], caption)
                         img_bytes = parsed.pop("_img_bytes", b"")
