@@ -1100,7 +1100,9 @@ def format_recon(res: dict, rows: list) -> tuple:
 
     btns = []
     if res["matched"]:
-        btns.append([{"text": f"🔄 對上的 {len(res['matched'])} 筆改成帳單實際台幣", "callback_data": "recon:apply"}])
+        n_diff = sum(1 for m in res["matched"] if m["card_diff"])
+        extra = f"＋更正 {n_diff} 筆卡別" if n_diff else ""
+        btns.append([{"text": f"🔄 對上的 {len(res['matched'])} 筆改成帳單實際台幣{extra}", "callback_data": "recon:apply"}])
     if res["missing"]:
         btns.append([{"text": f"➕ 漏記的 {len(res['missing'])} 筆補進帳本（共同平分）", "callback_data": "recon:add"}])
     return "\n".join(L), ({"inline_keyboard": btns} if btns else None)
@@ -1122,6 +1124,10 @@ def apply_recon(action: str) -> str:
                 continue
             if t["twd"]:
                 r["base_twd"] = int(t["twd"])
+            if m.get("card_diff") and res.get("card_key") in CARDS_INFO:
+                # 帳單證明是這張卡刷的 → 卡別、付款人一起更正
+                r["card_key"] = res["card_key"]
+                r["payer"] = CARDS_INFO[res["card_key"]]["owner"]
             if t["fee_twd"] is not None:
                 r["fee_twd"] = int(t["fee_twd"])
             r["total_twd"] = r["base_twd"] + r["fee_twd"]
