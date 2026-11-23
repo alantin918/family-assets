@@ -67,6 +67,32 @@ DEFAULT_RATES = {
 # 行前已付未結代墊差額（依據 HANDOFF.md：Anne 需給 Alan 36,488 元）
 PRE_TRIP_ANNE_OWES_ALAN = 36488
 
+# 預設付款方式（沒寫卡時）
+DEFAULT_CARD = "Al_永豐大戶"
+
+# 付款方式關鍵字（Anne：星展、現金；Alan：大戶、幣倍、現金）
+CARD_PATTERNS = [
+    (r"\b(chase|美國卡|an\s*chase)\b", "An_Chase"),
+    (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
+    (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
+    (r"(al|alan|倫)?\s*現金", "Cash_Al"),
+    (r"(al|alan|倫)?\s*(大戶|dawho)", "Al_永豐大戶"),
+    (r"(al|alan|倫)?\s*(永豐|幣倍)", "Al_永豐幣倍"),
+    (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
+    (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
+    (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
+    (r"al\s*(星展|eco)", "Al_星展eco"),
+    (r"(星展|eco)", "An_星展eco"),
+]
+
+
+def cash_by_currency(card_key: str, currency: str) -> str:
+    """現金依幣別分開記：英鎊／克朗各自一個錢包"""
+    if card_key in ("Cash_Al", "Cash_An") and currency.upper() in ("GBP", "ISK"):
+        return f"{card_key}_{currency.upper()}"
+    return card_key
+
+
 # 旅途信用卡設定：(持卡人, 顯示名稱, 回饋說明, 封頂上限TWD(0表無上限), 海外手續費率)
 CARDS_INFO = {
     "Al_星展eco": {
@@ -138,6 +164,11 @@ CARDS_INFO = {
         "desc": "免手續費",
         "limit": 0,
         "fee_rate": 0.0,
+    },
+    "Cash_Al_GBP": {"owner": "Alan", "label": "💷 Al現金英鎊", "desc": "免手續費", "limit": 0, "fee_rate": 0.0},
+    "Cash_Al_ISK": {"owner": "Alan", "label": "🇮🇸 Al現金克朗", "desc": "免手續費", "limit": 0, "fee_rate": 0.0},
+    "Cash_An_GBP": {"owner": "Anne", "label": "💷 An現金英鎊", "desc": "免手續費", "limit": 0, "fee_rate": 0.0},
+    "Cash_An_ISK": {"owner": "Anne", "label": "🇮🇸 An現金克朗", "desc": "免手續費", "limit": 0, "fee_rate": 0.0,
     },
 }
 
@@ -392,11 +423,11 @@ HELP_TEXT = (
     "✈️ <b>旅途記帳（5 秒快記）</b>\n"
     "直接打：<b>品項 金額幣別 [誰的卡] [個人]</b>\n"
     "• <code>龍蝦湯 4500isk Al星展</code>（預設兩人平分）\n"
-    "• <code>風衣 85gbp An個人 Chase</code>（Anne 個人）\n"
+    "• <code>風衣 85gbp An個人 An星展</code>（Anne 個人）\n"
     "• <code>熱狗 750isk</code>（沒寫卡 → 跳出按鈕選）\n"
     "• <code>咖啡 £4.5</code>\n"
     "💱 幣別：<code>isk／kr／克朗</code>・<code>gbp／£／英鎊</code>・<code>usd／$</code>・<code>eur／€</code>・<code>台幣</code>\n"
-    "💳 卡片：<code>Chase</code>・<code>An星展</code>・<code>Al星展</code>・<code>幣倍</code>・<code>大戶</code>・<code>聯邦</code>・<code>傳說</code>・<code>台新／玉山／國泰</code>・<code>現金</code>（<code>An現金</code>）\n"
+    "💳 付款：👩 <code>An星展</code>・<code>An現金</code>｜👨 <code>大戶</code>・<code>幣倍</code>・<code>Al現金</code>（沒寫＝Al大戶；現金自動分英鎊／克朗）\n"
     "👥 分攤：預設<b>共同平分</b>；<code>個人</code>＝刷卡的人自己付；也可寫 <code>An個人</code>／<code>Al個人</code>\n"
     "📸 <b>拍照記帳</b>：直接傳收據或刷卡截圖（可加文字說明卡片／個人）\n\n"
     "🧾 <b>記帳管理</b>\n"
@@ -470,19 +501,8 @@ def parse_quick_expense(text: str) -> dict:
     rem = (s[:m.start()] + " " + s[m.end():]).strip()
 
     # 識別卡片關鍵字
-    card_key = "Al_星展eco"
-    card_patterns = [
-        (r"\b(chase|美國卡|an\s*chase)\b", "An_Chase"),
-        (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
-        (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
-        (r"(al|alan|倫)?\s*現金", "Cash_Al"),
-        (r"(al|alan|倫)?\s*(大戶|dawho)", "Al_永豐大戶"),
-        (r"(al|alan|倫)?\s*(永豐|幣倍)", "Al_永豐幣倍"),
-        (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
-        (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
-        (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
-        (r"(al|alan|倫)?\s*(星展|eco)", "Al_星展eco"),
-    ]
+    card_key = DEFAULT_CARD
+    card_patterns = CARD_PATTERNS
     for pat, ckey in card_patterns:
         cm = re.search(pat, rem, re.IGNORECASE)
         if cm:
@@ -510,6 +530,7 @@ def parse_quick_expense(text: str) -> dict:
             break
 
     item_name = re.sub(r"\s+", " ", rem).strip() or "旅途消費"
+    card_key = cash_by_currency(card_key, currency)
     base_twd, fee_twd, total_twd, payer = calc_twd_and_fee(orig_amount, currency, card_key)
 
     return {
@@ -528,19 +549,8 @@ def parse_quick_expense(text: str) -> dict:
 
 def extract_card_and_split(hint_text: str) -> tuple:
     rem = hint_text.strip()
-    card_key = "Al_星展eco"
-    card_patterns = [
-        (r"\b(chase|美國卡|an\s*chase)\b", "An_Chase"),
-        (r"(an|anne|安|老婆|太太)\s*(星展|eco)", "An_星展eco"),
-        (r"(an|anne|安|老婆|太太)\s*現金", "Cash_An"),
-        (r"(al|alan|倫)?\s*現金", "Cash_Al"),
-        (r"(al|alan|倫)?\s*(大戶|dawho)", "Al_永豐大戶"),
-        (r"(al|alan|倫)?\s*(永豐|幣倍)", "Al_永豐幣倍"),
-        (r"(al|alan|倫)?\s*傳說", "Al_星展傳說"),
-        (r"(al|alan|倫)?\s*(聯邦|賴點)", "Al_聯邦賴點"),
-        (r"(al|alan|倫)?\s*(台新|richart|玉山|unicard|cube|國泰)", "Al_其他卡"),
-        (r"(al|alan|倫)?\s*(星展|eco)", "Al_星展eco"),
-    ]
+    card_key = DEFAULT_CARD
+    card_patterns = CARD_PATTERNS
     for pat, ckey in card_patterns:
         cm = re.search(pat, rem, re.IGNORECASE)
         if cm:
@@ -586,7 +596,7 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
     b64_img = base64.b64encode(img_bytes).decode("ascii")
     prompt = (
         "請辨識這張收據、台灣電子發票、統一發票、明細或刷卡通知截圖，並只回傳純 JSON 格式（不要加 markdown 區塊）：\n"
-        '{"item": "繁體中文店家或品項簡稱(例如：全聯採買、家樂福、星巴克、加油、香味饌麵食館)", "amount": 數字總額, "currency": "TWD或JPY或USD或EUR或GBP或ISK"}\n'
+        '{"item": "繁體中文店家或品項簡稱(例如：全聯採買、家樂福、星巴克、加油、香味饌麵食館)", "amount": 數字總額, "currency": "TWD或JPY或USD或EUR或GBP或ISK", "date": "收據上的消費日期時間 YYYY-MM-DD HH:MM（只有日期就 YYYY-MM-DD，看不到就空字串）"}\n'
         "注意：台灣發票請抓「總計／合計／應付」金額，不要抓發票號碼、統一編號、隨機碼、載具或找零；"
         "店名優先用賣方名稱。沒有標示幣別且像台灣收據時一律為 TWD；看到 ¥/円 為 JPY、£ 為 GBP、kr 為 ISK。"
     )
@@ -628,13 +638,17 @@ def ocr_receipt_photo(token: str, gemini_key: str, file_id: str, caption: str = 
         currency = "TWD"
 
     card_key, split_type, extra_note = extract_card_and_split(caption)
+    card_key = cash_by_currency(card_key, currency)
+    rec_date = str(parsed_json.get("date") or "").strip()
+    if not re.fullmatch(r"20\d\d-\d\d-\d\d( \d\d:\d\d)?", rec_date):
+        rec_date = get_now_str()
     ai_item = str(parsed_json.get("item") or "拍照收據").strip()
     item_name = f"{extra_note} ({ai_item})" if extra_note else f"📸 {ai_item}"
 
     base_twd, fee_twd, total_twd, payer = calc_twd_and_fee(orig_amount, currency, card_key)
 
     return {
-        "date": get_now_str(),
+        "date": rec_date,
         "item": item_name,
         "orig_amount": orig_amount,
         "currency": currency,
@@ -667,16 +681,17 @@ def expense_action_keyboard(exp_id: int, cur_card: str, cur_split: str) -> dict:
     return {
         "inline_keyboard": [
             [
-                {"text": c_lbl("Al_星展eco", "👨Al星展"), "callback_data": f"tcard:{exp_id}:Al_星展eco"},
-                {"text": c_lbl("Al_永豐幣倍", "👨Al永豐"), "callback_data": f"tcard:{exp_id}:Al_永豐幣倍"},
-                {"text": c_lbl("Al_永豐大戶", "👨Al大戶"), "callback_data": f"tcard:{exp_id}:Al_永豐大戶"},
-                {"text": c_lbl("Al_聯邦賴點", "👨Al賴點"), "callback_data": f"tcard:{exp_id}:Al_聯邦賴點"},
+                {"text": c_lbl("An_星展eco", "👩An星展"), "callback_data": f"tcard:{exp_id}:An_星展eco"},
+                {"text": c_lbl("Cash_An_GBP", "👩現金£"), "callback_data": f"tcard:{exp_id}:Cash_An_GBP"},
+                {"text": c_lbl("Cash_An_ISK", "👩現金kr"), "callback_data": f"tcard:{exp_id}:Cash_An_ISK"},
             ],
             [
-                {"text": c_lbl("An_星展eco", "👩An星展"), "callback_data": f"tcard:{exp_id}:An_星展eco"},
-                {"text": c_lbl("An_Chase", "👩Chase(0%)"), "callback_data": f"tcard:{exp_id}:An_Chase"},
-                {"text": c_lbl("Cash_Al", "💵Al現金"), "callback_data": f"tcard:{exp_id}:Cash_Al"},
-                {"text": c_lbl("Cash_An", "💵An現金"), "callback_data": f"tcard:{exp_id}:Cash_An"},
+                {"text": c_lbl("Al_永豐大戶", "👨Al大戶"), "callback_data": f"tcard:{exp_id}:Al_永豐大戶"},
+                {"text": c_lbl("Al_永豐幣倍", "👨Al幣倍"), "callback_data": f"tcard:{exp_id}:Al_永豐幣倍"},
+            ],
+            [
+                {"text": c_lbl("Cash_Al_GBP", "👨現金£"), "callback_data": f"tcard:{exp_id}:Cash_Al_GBP"},
+                {"text": c_lbl("Cash_Al_ISK", "👨現金kr"), "callback_data": f"tcard:{exp_id}:Cash_Al_ISK"},
             ],
             [
                 {"text": s_lbl("joint", "💑共同平分"), "callback_data": f"tsplit:{exp_id}:joint"},
@@ -835,7 +850,7 @@ def build_trip_summary_text() -> str:
     ]
 
     if not rows:
-        lines.append("<i>尚無旅途記帳紀錄！直接傳送如：</i>\n<code>龍蝦湯 4500isk Al星展</code>\n<code>風衣 85gbp An個人 Chase</code>\n<i>即可 5 秒記帳！</i>")
+        lines.append("<i>尚無旅途記帳紀錄！直接傳送如：</i>\n<code>龍蝦湯 4500isk Al星展</code>\n<code>風衣 85gbp An個人 An星展</code>\n<i>即可 5 秒記帳！</i>")
     else:
         s_icon = {"joint": "💑", "alan": "👨", "anne": "👩"}
         for r in rows[-10:]:
@@ -860,7 +875,7 @@ def build_cards_radar_text() -> str:
         "─── 👨 <b>Alan 的神卡額度</b> ───",
     ]
 
-    for ck in ("Al_永豐幣倍", "Al_永豐大戶", "Al_星展eco", "Al_聯邦賴點"):
+    for ck in ("Al_永豐大戶", "Al_永豐幣倍"):
         info = CARDS_INFO[ck]
         used = used_map.get(ck, 0)
         lim = info["limit"]
@@ -875,7 +890,7 @@ def build_cards_radar_text() -> str:
             lines.append(f"• <b>{info['label']}</b>（{info['desc']}）：已刷 <code>{fmt_nt(used)}</code>（無上限）")
 
     lines.append("\n─── 👩 <b>Anne 的神卡額度</b> ───")
-    for ck in ("An_星展eco", "An_Chase"):
+    for ck in ("An_星展eco",):
         info = CARDS_INFO[ck]
         used = used_map.get(ck, 0)
         lim = info["limit"]
@@ -891,8 +906,9 @@ def build_cards_radar_text() -> str:
 
     lines.append(
         "\n─── 💡 <b>旅途刷卡優先順序小抄</b> ───\n"
-        "1️⃣ <b>當地實體感應/插卡</b>：先刷滿雙方 <b>星展 eco (5%, 各 1.5萬)</b> ➔ 再刷 <b>Alan 永豐幣倍 (6%, 2萬)</b> ➔ <b>星展傳說 (5%, 1.25萬)</b>\n"
-        "2️⃣ <b>線上購票 / 餐廳 / 額度滿後</b>：刷 <b>Anne Chase 美國卡</b>（免 1.5% 海外手續費、餐廳 3x）"
+        "👩 Anne：<b>星展 eco</b>・現金（英鎊／克朗）\n"
+        "👨 Alan：<b>永豐大戶</b>・<b>永豐幣倍</b>・現金（英鎊／克朗）\n"
+        "💵 現金免手續費；照片說明寫「An現金」「Al現金」會依幣別自動分英鎊／克朗"
     )
     return "\n".join(lines)
 
